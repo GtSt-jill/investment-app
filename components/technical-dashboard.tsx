@@ -6,17 +6,17 @@ import { formatNumber, formatPercent, formatPrice } from "@/lib/format";
 import { DEFAULT_SEMICONDUCTOR_UNIVERSE, type MarketAnalysisResult, type RecommendationItem } from "@/lib/semiconductors/types";
 
 const ratingLabels: Record<RecommendationItem["rating"], string> = {
-  STRONG_BUY: "強い買い",
-  BUY: "買い",
+  STRONG_BUY: "強気監視",
+  BUY: "買い検討",
   WATCH: "監視",
-  SELL: "売り",
-  STRONG_SELL: "強い売り"
+  SELL: "弱含み",
+  STRONG_SELL: "新規買い回避"
 };
 
 const actionLabels: Record<RecommendationItem["action"], string> = {
-  BUY: "買い時",
-  HOLD: "様子見",
-  SELL: "売り時"
+  BUY: "買い検討",
+  HOLD: "監視継続",
+  SELL: "新規買い回避"
 };
 
 export function TechnicalDashboard() {
@@ -115,15 +115,15 @@ export function TechnicalDashboard() {
       </section>
 
       <section className="summary-grid">
-        <SummaryCard label="買い候補" value={formatNumber(result?.buyCandidates.length ?? 0, 0)} />
-        <SummaryCard label="売り候補" value={formatNumber(result?.sellCandidates.length ?? 0, 0)} />
+        <SummaryCard label="買い検討" value={formatNumber(result?.buyCandidates.length ?? 0, 0)} />
+        <SummaryCard label="弱含み" value={formatNumber(result?.sellCandidates.length ?? 0, 0)} />
         <SummaryCard label="平均スコア" value={formatNumber(result?.summary.averageScore ?? 0, 1)} />
         <SummaryCard label="地合い" value={marketBiasLabel(result?.summary.marketBias)} />
       </section>
 
       <section className="split-grid">
-        <RecommendationList title="今買い時の銘柄" rows={result?.buyCandidates.slice(0, 5) ?? []} emptyText="買い判定はまだありません。" />
-        <RecommendationList title="売り時・回避候補" rows={result?.sellCandidates.slice(0, 5) ?? []} emptyText="明確な売り判定はまだありません。" />
+        <RecommendationList title="買い検討候補" rows={result?.buyCandidates.slice(0, 5) ?? []} emptyText="買い検討判定はまだありません。" />
+        <RecommendationList title="弱含み・回避候補" rows={result?.sellCandidates.slice(0, 5) ?? []} emptyText="明確な弱含み判定はまだありません。" />
       </section>
 
       <section className="panel detail-panel">
@@ -150,6 +150,13 @@ export function TechnicalDashboard() {
                 <Metric label="3か月" value={formatNullablePercent(selectedRow.indicators.momentum63)} />
                 <Metric label="対20日線" value={distanceFrom(selectedRow.indicators.close, selectedRow.indicators.sma20)} />
                 <Metric label="ATR" value={formatNullablePercent(selectedRow.indicators.atrPct)} />
+              </div>
+              <div className="metric-grid score-breakdown-grid">
+                <Metric label="Trend" value={formatNumber(selectedRow.scoreBreakdown.trendScore, 0)} />
+                <Metric label="Momentum" value={formatNumber(selectedRow.scoreBreakdown.momentumScore, 0)} />
+                <Metric label="Relative" value={formatNumber(selectedRow.scoreBreakdown.relativeStrengthScore, 0)} />
+                <Metric label="Risk" value={formatNumber(selectedRow.scoreBreakdown.riskScore, 0)} />
+                <Metric label="Volume" value={formatNumber(selectedRow.scoreBreakdown.volumeScore, 0)} />
               </div>
               <div className="zone-grid">
                 <Metric label="理想買値" value={formatPrice(selectedRow.buyZone.idealEntry)} />
@@ -182,6 +189,7 @@ export function TechnicalDashboard() {
                 <th>Symbol</th>
                 <th>Action</th>
                 <th>Score</th>
+                <th>Change</th>
                 <th>Price</th>
                 <th>20D</th>
                 <th>63D</th>
@@ -207,6 +215,7 @@ export function TechnicalDashboard() {
                   <td>
                     <ScoreMeter score={row.score} />
                   </td>
+                  <td>{signalChangeLabel(row.signalChange)}</td>
                   <td>{formatPrice(row.indicators.close)}</td>
                   <td>{formatNullablePercent(row.indicators.momentum20)}</td>
                   <td>{formatNullablePercent(row.indicators.momentum63)}</td>
@@ -356,6 +365,21 @@ function marketBiasLabel(value: MarketAnalysisResult["summary"]["marketBias"] | 
   }
 
   return "中立";
+}
+
+function signalChangeLabel(value: RecommendationItem["signalChange"]) {
+  const labels: Record<RecommendationItem["signalChange"], string> = {
+    NEW_BUY: "新規強気",
+    BUY_CONTINUATION: "強気継続",
+    BUY_TO_HOLD: "中立化",
+    HOLD_TO_BUY: "強気転換",
+    NEW_SELL: "新規弱含み",
+    SELL_CONTINUATION: "弱含み継続",
+    SELL_TO_HOLD: "中立化",
+    NO_CHANGE: "-"
+  };
+
+  return labels[value];
 }
 
 function formatNullable(value: number | null) {

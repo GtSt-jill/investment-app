@@ -8,7 +8,7 @@ export default function HomePage() {
           <p className="eyebrow">Semiconductor Technical Desk</p>
           <h1>半導体銘柄シグナル</h1>
           <p className="hero-copy">
-            Alpaca の日足データから主要半導体銘柄を横断分析し、トレンド、モメンタム、出来高、相対強度で買い時・売り時を整理します。
+            Alpaca の日足データから主要半導体銘柄を横断分析し、トレンド、モメンタム、出来高、相対強度で買い検討・監視継続・新規買い回避を整理します。
           </p>
         </div>
         <div className="header-status">

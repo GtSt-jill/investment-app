@@ -17,6 +17,24 @@ export const DEFAULT_SEMICONDUCTOR_UNIVERSE = [
 
 export type SignalAction = "BUY" | "HOLD" | "SELL";
 export type SignalRating = "STRONG_BUY" | "BUY" | "WATCH" | "SELL" | "STRONG_SELL";
+export type SignalChange =
+  | "NEW_BUY"
+  | "BUY_CONTINUATION"
+  | "BUY_TO_HOLD"
+  | "HOLD_TO_BUY"
+  | "NEW_SELL"
+  | "SELL_CONTINUATION"
+  | "SELL_TO_HOLD"
+  | "NO_CHANGE";
+export type MarketRegime = "bullish" | "neutral" | "defensive";
+
+export interface ScoreBreakdown {
+  trendScore: number;
+  momentumScore: number;
+  relativeStrengthScore: number;
+  riskScore: number;
+  volumeScore: number;
+}
 
 export interface PriceBar {
   date: string;
@@ -31,6 +49,7 @@ export interface SymbolProfile {
   symbol: string;
   name: string;
   segment: string;
+  earningsDate?: string;
 }
 
 export interface IndicatorSnapshot {
@@ -44,16 +63,20 @@ export interface IndicatorSnapshot {
   macd: number | null;
   macdSignal: number | null;
   macdHistogram: number | null;
+  macdHistogramPrevious: number | null;
   bollingerUpper: number | null;
   bollingerLower: number | null;
   atr14: number | null;
   atrPct: number | null;
+  volume5: number | null;
   volume20: number | null;
   volumeRatio: number | null;
+  volume5To20Ratio: number | null;
   momentum20: number | null;
   momentum63: number | null;
   momentum126: number | null;
   drawdownFromHigh: number | null;
+  longTermTrendUnavailable: boolean;
 }
 
 export interface RecommendationItem {
@@ -63,9 +86,14 @@ export interface RecommendationItem {
   asOf: string;
   rating: SignalRating;
   action: SignalAction;
+  previousAction?: SignalAction;
+  signalChange: SignalChange;
   score: number;
+  scoreBreakdown: ScoreBreakdown;
   rank: number;
   relativeStrengthRank: number;
+  marketRegime?: MarketRegime;
+  earningsDate?: string;
   indicators: IndicatorSnapshot;
   reasons: string[];
   risks: string[];
@@ -96,7 +124,9 @@ export interface MarketAnalysisResult {
     averageScore: number;
     strongestSymbol: string | null;
     weakestSymbol: string | null;
-    marketBias: "bullish" | "neutral" | "defensive";
+    marketBias: MarketRegime;
+    marketRegime: MarketRegime;
+    excludedSymbols: string[];
   };
   notes: string[];
 }

@@ -93,11 +93,15 @@ export function macd(values: number[], fastLength = 12, slowLength = 26, signalL
 
   const latestMacd = lastNumber(macdLine);
   const latestSignal = lastNumber(signalLine);
+  const latestHistogram =
+    latestMacd !== null && latestSignal !== null ? latestMacd - latestSignal : null;
+  const previousHistogram = previousMacdHistogram(macdLine, signalLine);
 
   return {
     macd: latestMacd,
     signal: latestSignal,
-    histogram: latestMacd !== null && latestSignal !== null ? latestMacd - latestSignal : null
+    histogram: latestHistogram,
+    previousHistogram
   };
 }
 
@@ -133,6 +137,17 @@ export function averageTrueRange(bars: PriceBar[], length = 14) {
   return simpleMovingAverage(trueRanges, length);
 }
 
+export function averageTrueRangePct(bars: PriceBar[], length = 14) {
+  const atr = averageTrueRange(bars, length);
+  const latestClose = bars[bars.length - 1]?.close;
+
+  if (atr === null || !latestClose || latestClose <= 0) {
+    return null;
+  }
+
+  return atr / latestClose;
+}
+
 export function momentum(values: number[], length: number) {
   if (length <= 0 || values.length <= length) {
     return null;
@@ -162,6 +177,28 @@ function lastNumber(values: Array<number | null>) {
     if (values[index] !== null && Number.isFinite(values[index])) {
       return values[index];
     }
+  }
+
+  return null;
+}
+
+function previousMacdHistogram(macdLine: Array<number | null>, signalLine: Array<number | null>) {
+  let foundLatest = false;
+
+  for (let index = macdLine.length - 1; index >= 0; index -= 1) {
+    const macdValue = macdLine[index];
+    const signalValue = signalLine[index];
+
+    if (macdValue === null || signalValue === null) {
+      continue;
+    }
+
+    if (!foundLatest) {
+      foundLatest = true;
+      continue;
+    }
+
+    return macdValue - signalValue;
   }
 
   return null;

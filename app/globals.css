@@ -528,6 +528,10 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.score-breakdown-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .metric {
   background: var(--surface-solid);
   border: 1px solid var(--line);
@@ -698,7 +702,8 @@ tbody tr:last-child td {
 
   .symbol-toggle-grid,
   .metric-grid,
-  .zone-grid {
+  .zone-grid,
+  .score-breakdown-grid {
     grid-template-columns: 1fr;
   }
 

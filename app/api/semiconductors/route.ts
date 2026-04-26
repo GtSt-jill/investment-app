@@ -13,8 +13,15 @@ export async function POST(request: Request) {
     const symbols = coerceSymbols(payload.symbols);
     const lookbackDays = coerceLookbackDays(payload.lookbackDays);
     const universe = DEFAULT_SEMICONDUCTOR_UNIVERSE.filter((profile) => symbols.includes(profile.symbol));
-    const barsBySymbol = await fetchDailyBars(symbols, lookbackDays);
-    const result = analyzeSemiconductors(barsBySymbol, universe);
+    const marketSymbols = ["SMH", "QQQ"];
+    const fetchSymbols = Array.from(new Set([...symbols, ...marketSymbols]));
+    const barsBySymbol = await fetchDailyBars(fetchSymbols, lookbackDays);
+    const result = analyzeSemiconductors(barsBySymbol, universe, {
+      marketBars: {
+        semiconductor: barsBySymbol.SMH,
+        qqq: barsBySymbol.QQQ
+      }
+    });
 
     return NextResponse.json(result);
   } catch (error) {
