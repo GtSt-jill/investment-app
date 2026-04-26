@@ -204,7 +204,9 @@ export function TechnicalDashboard() {
                   <td>
                     <SignalBadge row={row} compact />
                   </td>
-                  <td>{row.score}</td>
+                  <td>
+                    <ScoreMeter score={row.score} />
+                  </td>
                   <td>{formatPrice(row.indicators.close)}</td>
                   <td>{formatNullablePercent(row.indicators.momentum20)}</td>
                   <td>{formatNullablePercent(row.indicators.momentum63)}</td>
@@ -270,6 +272,17 @@ function SignalBadge({ row, compact = false }: { row: RecommendationItem; compac
     <span className={`signal-badge ${row.action.toLowerCase()} ${compact ? "compact" : ""}`}>
       {compact ? actionLabels[row.action] : `${actionLabels[row.action]} / ${ratingLabels[row.rating]}`}
     </span>
+  );
+}
+
+function ScoreMeter({ score }: { score: number }) {
+  return (
+    <div className="score-meter" aria-label={`Score ${score}`}>
+      <strong>{score}</strong>
+      <span>
+        <i style={{ width: `${score}%` }} />
+      </span>
+    </div>
   );
 }
 

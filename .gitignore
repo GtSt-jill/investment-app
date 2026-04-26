@@ -4,3 +4,5 @@ coverage
 dist
 *.log
 data/*.json
+.env*
+!.env.example

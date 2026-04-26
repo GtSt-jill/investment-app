@@ -9,8 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run",
-    "fetch:data": "node scripts/fetch-yahoo-data.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
     "next": "^15.2.4",
