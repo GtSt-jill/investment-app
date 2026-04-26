@@ -161,6 +161,13 @@ button:disabled {
   justify-content: space-between;
 }
 
+.control-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .panel-header {
   margin-bottom: 16px;
 }
@@ -178,8 +185,11 @@ button:disabled {
 
 .symbol-toggle-grid {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .symbol-toggle {
@@ -189,8 +199,8 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--ink);
-  min-height: 76px;
-  padding: 11px;
+  min-height: 58px;
+  padding: 9px;
   position: relative;
   text-align: left;
   transition:
@@ -217,10 +227,10 @@ button:disabled {
 .symbol-toggle.active::after {
   background: linear-gradient(90deg, var(--accent), var(--cyan));
   border-radius: 999px;
-  bottom: 9px;
+  bottom: 7px;
   content: "";
   height: 3px;
-  left: 11px;
+  left: 9px;
   position: absolute;
   width: 34px;
 }
@@ -243,15 +253,84 @@ button:disabled {
 
 .symbol-toggle span,
 .table-subtext {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   line-height: 1.35;
   margin-top: 4px;
+}
+
+.universe-tools {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto;
+  margin-bottom: 12px;
+}
+
+.universe-tools input {
+  background: var(--surface-solid);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 11px 12px;
+}
+
+.universe-tools button {
+  background: #edf2f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 800;
+  padding: 10px 12px;
 }
 
 .run-row {
   border-top: 1px solid var(--line);
   margin-top: 16px;
   padding-top: 16px;
+}
+
+.run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.secondary-button {
+  background: #edf2f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 800;
+  padding: 12px 16px;
+}
+
+.universe-drawer {
+  background: rgba(247, 249, 252, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 16px;
+  padding: 12px;
+}
+
+.selected-symbol-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.selected-symbol-strip button,
+.selected-symbol-strip span {
+  align-items: center;
+  background: var(--surface-solid);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.74rem;
+  min-height: 26px;
+  padding: 4px 8px;
 }
 
 .run-row label {
@@ -355,8 +434,11 @@ button:disabled {
 
 .price-board {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  max-height: 500px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .price-card {
@@ -366,8 +448,8 @@ button:disabled {
   color: var(--ink);
   display: grid;
   gap: 8px;
-  min-height: 150px;
-  padding: 12px;
+  min-height: 126px;
+  padding: 11px;
   text-align: left;
   transition:
     border-color 160ms ease,
@@ -417,7 +499,7 @@ button:disabled {
 }
 
 .price-card-price {
-  font-size: 1.42rem;
+  font-size: 1.24rem;
   font-weight: 850;
   letter-spacing: -0.02em;
 }
@@ -989,7 +1071,7 @@ tbody tr:last-child td {
 @media (max-width: 1100px) {
   .symbol-toggle-grid,
   .price-board {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .detail-grid,
@@ -1016,6 +1098,14 @@ tbody tr:last-child td {
   .price-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .universe-tools {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .run-actions {
+    justify-content: start;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1037,6 +1127,10 @@ tbody tr:last-child td {
     flex-direction: column;
   }
 
+  .control-status-row {
+    justify-content: start;
+  }
+
   .symbol-toggle-grid,
   .price-board,
   .metric-grid,
@@ -1044,6 +1138,14 @@ tbody tr:last-child td {
   .score-breakdown-grid,
   .price-metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .universe-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .run-actions {
+    flex-direction: column;
   }
 
   .security-snapshot {

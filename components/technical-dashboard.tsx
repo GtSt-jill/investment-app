@@ -21,7 +21,9 @@ const actionLabels: Record<RecommendationItem["action"], string> = {
 
 export function TechnicalDashboard() {
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(() => DEFAULT_SEMICONDUCTOR_UNIVERSE.map((item) => item.symbol));
+  const [symbolFilter, setSymbolFilter] = useState("");
   const [lookbackDays, setLookbackDays] = useState(520);
+  const [isUniverseOpen, setIsUniverseOpen] = useState(false);
   const [result, setResult] = useState<MarketAnalysisResult | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string>(DEFAULT_SEMICONDUCTOR_UNIVERSE[0].symbol);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +42,14 @@ export function TechnicalDashboard() {
 
     return result.recommendations.find((row) => row.symbol === selectedSymbol) ?? result.recommendations[0] ?? null;
   }, [result, selectedSymbol]);
+  const filteredUniverse = useMemo(() => {
+    const query = symbolFilter.trim().toUpperCase();
+    if (!query) {
+      return DEFAULT_SEMICONDUCTOR_UNIVERSE;
+    }
+
+    return DEFAULT_SEMICONDUCTOR_UNIVERSE.filter((profile) => profile.symbol.includes(query) || profile.name.toUpperCase().includes(query));
+  }, [symbolFilter]);
 
   function toggleSymbol(symbol: string) {
     setSelectedSymbols((current) => {
@@ -80,21 +90,10 @@ export function TechnicalDashboard() {
             <p className="panel-eyebrow">Universe</p>
             <h2>分析対象</h2>
           </div>
-          <span className={`status-pill ${isPending ? "pending" : ""}`}>{isPending ? "取得中" : "準備完了"}</span>
-        </div>
-
-        <div className="symbol-toggle-grid">
-          {DEFAULT_SEMICONDUCTOR_UNIVERSE.map((profile) => (
-            <button
-              key={profile.symbol}
-              type="button"
-              className={`symbol-toggle ${selectedSymbols.includes(profile.symbol) ? "active" : ""}`}
-              onClick={() => toggleSymbol(profile.symbol)}
-            >
-              <strong>{profile.symbol}</strong>
-              <span>{profile.segment}</span>
-            </button>
-          ))}
+          <div className="control-status-row">
+            <span className="status-pill">{selectedSymbols.length} / {DEFAULT_SEMICONDUCTOR_UNIVERSE.length}</span>
+            <span className={`status-pill ${isPending ? "pending" : ""}`}>{isPending ? "取得中" : "準備完了"}</span>
+          </div>
         </div>
 
         <div className="run-row">
@@ -106,10 +105,60 @@ export function TechnicalDashboard() {
               <option value={780}>約3年</option>
             </select>
           </label>
-          <button type="button" className="primary-button" onClick={runAnalysis} disabled={isPending}>
-            分析を更新
-          </button>
+          <div className="run-actions">
+            <button type="button" className="secondary-button" onClick={() => setIsUniverseOpen((current) => !current)}>
+              {isUniverseOpen ? "銘柄選択を閉じる" : "銘柄を編集"}
+            </button>
+            <button type="button" className="primary-button" onClick={runAnalysis} disabled={isPending}>
+              分析を更新
+            </button>
+          </div>
         </div>
+
+        {isUniverseOpen ? (
+          <div className="universe-drawer">
+            <div className="universe-tools">
+              <input
+                type="search"
+                placeholder="ティッカー検索"
+                value={symbolFilter}
+                onChange={(event) => setSymbolFilter(event.target.value)}
+              />
+              <button type="button" onClick={() => setSelectedSymbols(DEFAULT_SEMICONDUCTOR_UNIVERSE.map((item) => item.symbol))}>
+                全選択
+              </button>
+              <button type="button" onClick={() => setSelectedSymbols(DEFAULT_SEMICONDUCTOR_UNIVERSE.slice(0, 20).map((item) => item.symbol))}>
+                上位20件
+              </button>
+              <button type="button" onClick={() => setSelectedSymbols((current) => (current.length <= 1 ? current : [current[0]]))}>
+                クリア
+              </button>
+            </div>
+
+            <div className="selected-symbol-strip" aria-label="Selected symbols">
+              {selectedSymbols.slice(0, 36).map((symbol) => (
+                <button key={symbol} type="button" onClick={() => toggleSymbol(symbol)}>
+                  {symbol}
+                </button>
+              ))}
+              {selectedSymbols.length > 36 ? <span>+{selectedSymbols.length - 36}</span> : null}
+            </div>
+
+            <div className="symbol-toggle-grid">
+              {filteredUniverse.map((profile) => (
+                <button
+                  key={profile.symbol}
+                  type="button"
+                  className={`symbol-toggle ${selectedSymbols.includes(profile.symbol) ? "active" : ""}`}
+                  onClick={() => toggleSymbol(profile.symbol)}
+                >
+                  <strong>{profile.symbol}</strong>
+                  <span>{selectedSymbols.includes(profile.symbol) ? "Selected" : profile.segment}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {error ? <p className="error-message">{error}</p> : null}
       </section>
@@ -122,7 +171,7 @@ export function TechnicalDashboard() {
       </section>
 
       {result?.recommendations.length ? (
-        <PriceBoard rows={result.recommendations} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} />
+        <PriceBoard rows={result.recommendations.slice(0, 28)} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} totalRows={result.recommendations.length} />
       ) : null}
 
       <section className="split-grid">
@@ -247,11 +296,13 @@ export function TechnicalDashboard() {
 function PriceBoard({
   rows,
   selectedSymbol,
-  onSelect
+  onSelect,
+  totalRows
 }: {
   rows: RecommendationItem[];
   selectedSymbol: string;
   onSelect: (symbol: string) => void;
+  totalRows: number;
 }) {
   return (
     <section className="panel price-board-panel">
@@ -260,7 +311,7 @@ function PriceBoard({
           <p className="panel-eyebrow">Market Board</p>
           <h2>価格とシグナルの俯瞰</h2>
         </div>
-        <span className="muted-copy">クリックで詳細を切り替え</span>
+        <span className="muted-copy">上位{rows.length}件 / 全{totalRows}件</span>
       </div>
       <div className="price-board">
         {rows.map((row) => (

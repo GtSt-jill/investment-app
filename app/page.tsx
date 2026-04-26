@@ -14,7 +14,7 @@ export default function HomePage() {
         <div className="header-status">
           <span>Data</span>
           <strong>Alpaca Market Data</strong>
-          <p>日足 / 調整後価格 / 主要14銘柄</p>
+          <p>日足 / 調整後価格 / 半導体・AI関連ウォッチリスト</p>
         </div>
       </section>
 
