@@ -457,13 +457,17 @@ export function calculateMarketRegime(marketBars?: AnalyzeSemiconductorsOptions[
 function buildChart(bars: PriceBar[], closes: number[]) {
   const sma20 = movingAverageSeries(closes, 20);
   const sma50 = movingAverageSeries(closes, 50);
-  const start = Math.max(0, bars.length - 90);
+  const start = Math.max(0, bars.length - 180);
 
   return bars.slice(start).map((bar, offset) => {
     const index = start + offset;
     return {
       date: bar.date,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
       close: bar.close,
+      volume: bar.volume,
       sma20: sma20[index] ?? null,
       sma50: sma50[index] ?? null
     };

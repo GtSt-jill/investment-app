@@ -105,7 +105,11 @@ export interface RecommendationItem {
   };
   chart: Array<{
     date: string;
+    open: number;
+    high: number;
+    low: number;
     close: number;
+    volume: number;
     sma20: number | null;
     sma50: number | null;
   }>;

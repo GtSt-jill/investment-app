@@ -146,6 +146,7 @@ button:disabled {
 .recommendation-panel,
 .detail-panel,
 .table-panel,
+.price-board-panel,
 .disclosure-panel {
   padding: 18px;
 }
@@ -162,6 +163,10 @@ button:disabled {
 
 .panel-header {
   margin-bottom: 16px;
+}
+
+.compact-header {
+  margin-bottom: 12px;
 }
 
 .panel-header h2,
@@ -348,6 +353,81 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.price-board {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.price-card {
+  background: var(--surface-solid);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  gap: 8px;
+  min-height: 150px;
+  padding: 12px;
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.price-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--soft-shadow);
+  transform: translateY(-1px);
+}
+
+.price-card.active {
+  border-color: rgba(59, 99, 217, 0.58);
+  box-shadow:
+    inset 0 0 0 1px rgba(59, 99, 217, 0.16),
+    var(--soft-shadow);
+}
+
+.price-card.buy.active {
+  border-color: rgba(4, 120, 87, 0.5);
+}
+
+.price-card.sell.active {
+  border-color: rgba(192, 54, 44, 0.48);
+}
+
+.price-card-top,
+.price-card-bottom {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.price-card-top strong {
+  font-size: 1.12rem;
+  letter-spacing: 0.02em;
+}
+
+.price-card-name {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  min-height: 2.2em;
+}
+
+.price-card-price {
+  font-size: 1.42rem;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+}
+
+.price-card-bottom {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+}
+
 .recommendation-list {
   display: grid;
   gap: 10px;
@@ -430,6 +510,63 @@ button:disabled {
   padding: 12px;
 }
 
+.stock-chart-box {
+  background: var(--surface-solid);
+  padding: 12px;
+}
+
+.stock-chart-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.stock-chart-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stock-chart-toolbar strong {
+  font-size: 1rem;
+}
+
+.stock-chart-toolbar span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.range-tabs {
+  background: #edf2f7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: inline-flex;
+  padding: 3px;
+}
+
+.range-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  min-width: 42px;
+  padding: 7px 9px;
+}
+
+.range-tabs button.active {
+  background: var(--surface-solid);
+  box-shadow: 0 2px 8px rgba(20, 30, 46, 0.1);
+  color: var(--accent-strong);
+}
+
 .mini-chart {
   display: block;
   height: auto;
@@ -440,8 +577,86 @@ button:disabled {
   fill: #fbfdff;
 }
 
-.price-stroke {
-  stroke: var(--accent);
+.stock-chart {
+  touch-action: none;
+}
+
+.chart-grid-line {
+  stroke: rgba(99, 112, 131, 0.16);
+  stroke-width: 1;
+}
+
+.chart-grid-line.vertical {
+  stroke-dasharray: 4 6;
+}
+
+.chart-axis-line {
+  stroke: rgba(99, 112, 131, 0.26);
+  stroke-width: 1;
+}
+
+.axis-label {
+  fill: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.candle-wick.up,
+.candle-body.up {
+  fill: var(--buy);
+  stroke: var(--buy);
+}
+
+.candle-wick.down,
+.candle-body.down {
+  fill: var(--sell);
+  stroke: var(--sell);
+}
+
+.candle-body.up,
+.candle-body.down {
+  stroke-width: 1;
+}
+
+.volume-bar {
+  opacity: 0.34;
+}
+
+.volume-bar.up {
+  fill: var(--buy);
+}
+
+.volume-bar.down {
+  fill: var(--sell);
+}
+
+.current-price-line {
+  stroke: rgba(59, 99, 217, 0.62);
+  stroke-dasharray: 5 5;
+  stroke-width: 1.2;
+}
+
+.current-price-label-bg {
+  fill: var(--accent);
+}
+
+.current-price-label {
+  fill: #fff;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.crosshair-line {
+  stroke: rgba(17, 24, 39, 0.36);
+  stroke-dasharray: 3 4;
+  stroke-width: 1;
+}
+
+.crosshair-dot {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 2;
 }
 
 .sma20-stroke {
@@ -477,8 +692,12 @@ button:disabled {
   width: 12px;
 }
 
-.price-line-key::before {
-  background: var(--accent);
+.candle-up-key::before {
+  background: var(--buy);
+}
+
+.candle-down-key::before {
+  background: var(--sell);
 }
 
 .sma20-line-key::before {
@@ -489,12 +708,17 @@ button:disabled {
   background: var(--violet);
 }
 
+.volume-line-key::before {
+  background: #94a3b8;
+}
+
 .detail-copy {
   display: grid;
   gap: 14px;
 }
 
-.price-line {
+.price-line,
+.security-snapshot {
   background:
     linear-gradient(135deg, rgba(17, 24, 39, 0.98), rgba(36, 63, 145, 0.92)),
     #111827;
@@ -504,17 +728,114 @@ button:disabled {
   padding: 16px;
 }
 
+.security-snapshot {
+  align-items: stretch;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.security-snapshot > div {
+  display: grid;
+  gap: 8px;
+}
+
+.security-snapshot strong {
+  font-size: 2.35rem;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.snapshot-meta {
+  color: rgba(248, 250, 252, 0.66);
+  font-size: 0.86rem;
+}
+
+.snapshot-score {
+  align-content: center;
+  justify-items: end;
+  min-width: 150px;
+}
+
+.snapshot-score span {
+  color: rgba(248, 250, 252, 0.66);
+  font-size: 0.78rem;
+}
+
+.snapshot-score strong {
+  font-size: 2rem;
+}
+
 .price-line strong {
   font-size: 2.15rem;
   letter-spacing: -0.02em;
 }
 
-.positive {
+.positive,
+.price-move.positive {
   color: #62e6a8;
 }
 
-.negative {
+.negative,
+.price-move.negative {
   color: #ff9488;
+}
+
+.price-move {
+  background: rgba(17, 24, 39, 0.05);
+  border-radius: 999px;
+  display: inline-flex;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.82rem;
+  font-weight: 800;
+  justify-content: center;
+  padding: 4px 8px;
+  width: fit-content;
+}
+
+.security-snapshot .price-move {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.breakdown-panel {
+  background: var(--surface-solid);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+}
+
+.breakdown-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 82px minmax(0, 1fr) 34px;
+}
+
+.breakdown-row span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.breakdown-row div {
+  background: #e7ecf3;
+  border-radius: 999px;
+  height: 9px;
+  overflow: hidden;
+}
+
+.breakdown-row i {
+  background: linear-gradient(90deg, var(--cyan), var(--accent), var(--violet));
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.breakdown-row strong {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.86rem;
+  text-align: right;
 }
 
 .metric-grid,
@@ -542,6 +863,10 @@ button:disabled {
 
 .metric strong {
   font-size: 1.22rem;
+}
+
+.price-metric-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .reason-block {
@@ -573,7 +898,7 @@ table {
 th,
 td {
   border-bottom: 1px solid var(--line);
-  padding: 12px 10px;
+  padding: 14px 10px;
   text-align: left;
   vertical-align: middle;
 }
@@ -599,6 +924,14 @@ tbody tr {
 tbody tr:hover,
 .selected-row {
   background: #eef5ff;
+}
+
+td:nth-child(6),
+td:nth-child(7),
+td:nth-child(8),
+td:nth-child(9) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 tbody tr:last-child td {
@@ -654,7 +987,8 @@ tbody tr:last-child td {
 }
 
 @media (max-width: 1100px) {
-  .symbol-toggle-grid {
+  .symbol-toggle-grid,
+  .price-board {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
@@ -677,7 +1011,9 @@ tbody tr:last-child td {
   }
 
   .metric-grid,
-  .symbol-toggle-grid {
+  .symbol-toggle-grid,
+  .price-board,
+  .price-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -695,16 +1031,28 @@ tbody tr:last-child td {
   .control-head,
   .panel-header,
   .run-row,
-  .price-line {
+  .price-line,
+  .security-snapshot {
     align-items: stretch;
     flex-direction: column;
   }
 
   .symbol-toggle-grid,
+  .price-board,
   .metric-grid,
   .zone-grid,
-  .score-breakdown-grid {
+  .score-breakdown-grid,
+  .price-metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .security-snapshot {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .snapshot-score {
+    justify-items: start;
   }
 
   .recommendation-card {
