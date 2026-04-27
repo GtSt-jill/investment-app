@@ -89,6 +89,7 @@ function result(id: string, generatedAt: string): TradingDryRunResult {
       generatedAt,
       summary: {
         positionCount: 0,
+        openOrderCount: 0,
         longExposure: 0,
         shortExposure: 0,
         cashAllocationPct: 1,

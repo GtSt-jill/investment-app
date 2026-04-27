@@ -344,8 +344,10 @@ function portfolio(input: {
     generatedAt: "2026-04-24T21:00:00.000Z",
     account,
     positions: input.positions,
+    openOrders: [],
     summary: {
       positionCount: input.positions.length,
+      openOrderCount: 0,
       longExposure: input.positions.reduce((total, position) => total + Math.max(position.marketValue, 0), 0),
       shortExposure: input.positions.reduce((total, position) => total + Math.abs(Math.min(position.marketValue, 0)), 0),
       cashAllocationPct: account.portfolioValue > 0 ? account.cash / account.portfolioValue : null,

@@ -662,7 +662,10 @@ function TradingDashboard({
 }
 
 function PlanStatusBadge({ status }: { status: string }) {
-  const tone = status === "planned" || status === "submitted" || status === "completed" ? "ok" : status === "blocked" || status === "skipped" ? "warn" : "danger";
+  const normalized = status.toLowerCase();
+  const activeStatuses = new Set(["planned", "submitted", "completed", "new", "accepted", "pending_new", "partially_filled", "open"]);
+  const warningStatuses = new Set(["blocked", "skipped", "held", "pending_cancel", "pending_replace"]);
+  const tone = activeStatuses.has(normalized) ? "ok" : warningStatuses.has(normalized) ? "warn" : "danger";
 
   return <StatusChip label={status} tone={tone} />;
 }
@@ -680,6 +683,7 @@ function PortfolioDashboard({
 }) {
   const account = snapshot?.account;
   const positions = snapshot?.positions ?? [];
+  const openOrders = snapshot?.openOrders ?? [];
 
   return (
     <>
@@ -718,6 +722,7 @@ function PortfolioDashboard({
               <SummaryCard label="買付余力" value={formatPrice(account.buyingPower)} />
               <SummaryCard label="当日損益" value={formatSignedCurrency(account.dayPnl)} />
               <SummaryCard label="保有銘柄" value={formatNumber(snapshot.summary.positionCount, 0)} />
+              <SummaryCard label="未約定注文" value={formatNumber(snapshot.summary.openOrderCount, 0)} />
             </section>
           </>
         ) : (
@@ -770,6 +775,58 @@ function PortfolioDashboard({
                 <StatusChip label="Account" tone={snapshot.account.accountBlocked ? "danger" : "ok"} />
               </div>
             </section>
+          </section>
+
+          <section className="panel table-panel">
+            <div className="panel-header">
+              <div>
+                <p className="panel-eyebrow">Open Orders</p>
+                <h2>未約定注文</h2>
+              </div>
+              <span className="muted-copy">{openOrders.length} orders</span>
+            </div>
+            {openOrders.length === 0 ? (
+              <p className="muted-copy">現在の未約定注文はありません。</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Side</th>
+                      <th>Status</th>
+                      <th>Type</th>
+                      <th>Qty</th>
+                      <th>Notional</th>
+                      <th>Limit</th>
+                      <th>Stop</th>
+                      <th>Submitted</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {openOrders.map((order) => (
+                      <tr key={order.id ?? order.clientOrderId ?? `${order.symbol}-${order.submittedAt ?? order.status ?? "open"}`}>
+                        <td>
+                          <strong>{order.symbol}</strong>
+                          <span className="table-subtext">{order.assetClass ?? "asset"}</span>
+                        </td>
+                        <td>{order.side ?? "-"}</td>
+                        <td><PlanStatusBadge status={order.status ?? "open"} /></td>
+                        <td>
+                          {order.type ?? "-"}
+                          {order.orderClass ? <span className="table-subtext">{order.orderClass}</span> : null}
+                        </td>
+                        <td>{formatOptionalNumber(order.quantity, 4)}</td>
+                        <td>{formatOptionalPrice(order.notional)}</td>
+                        <td>{formatOptionalPrice(order.limitPrice)}</td>
+                        <td>{formatOptionalPrice(order.stopPrice)}</td>
+                        <td>{formatOptionalDateTime(order.submittedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
 
           <section className="panel table-panel">
@@ -1183,6 +1240,18 @@ function signalChangeLabel(value: RecommendationItem["signalChange"]) {
 
 function formatNullable(value: number | null) {
   return value === null ? "-" : formatNumber(value, 1);
+}
+
+function formatOptionalNumber(value: number | undefined, maximumFractionDigits = 1) {
+  return value === undefined ? "-" : formatNumber(value, maximumFractionDigits);
+}
+
+function formatOptionalPrice(value: number | undefined) {
+  return value === undefined ? "-" : formatPrice(value);
+}
+
+function formatOptionalDateTime(value: string | undefined) {
+  return value ? new Date(value).toLocaleString("ja-JP") : "-";
 }
 
 function formatNullablePercent(value: number | null) {

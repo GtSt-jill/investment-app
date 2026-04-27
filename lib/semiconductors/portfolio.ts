@@ -37,12 +37,31 @@ export interface AlpacaPositionSnapshot {
   allocationPct: number | null;
 }
 
+export interface AlpacaOpenOrderSnapshot {
+  id?: string;
+  clientOrderId?: string;
+  symbol: string;
+  assetClass?: string;
+  side?: string;
+  type?: string;
+  orderClass?: string;
+  status?: string;
+  quantity?: number;
+  notional?: number;
+  limitPrice?: number;
+  stopPrice?: number;
+  submittedAt?: string;
+  expiresAt?: string;
+}
+
 export interface PortfolioSnapshot {
   generatedAt: string;
   account: AlpacaAccountSnapshot;
   positions: AlpacaPositionSnapshot[];
+  openOrders: AlpacaOpenOrderSnapshot[];
   summary: {
     positionCount: number;
+    openOrderCount: number;
     longExposure: number;
     shortExposure: number;
     cashAllocationPct: number | null;
@@ -61,16 +80,22 @@ interface AlpacaCredentials {
 
 type AlpacaAccountResponse = Record<string, unknown>;
 type AlpacaPositionResponse = Record<string, unknown>;
+type AlpacaOrderResponse = Record<string, unknown>;
 
 export async function fetchPortfolioSnapshot(): Promise<PortfolioSnapshot> {
-  const [accountPayload, positionsPayload] = await Promise.all([
+  const [accountPayload, positionsPayload, ordersPayload] = await Promise.all([
     fetchTradingApi<AlpacaAccountResponse>("/v2/account"),
-    fetchTradingApi<AlpacaPositionResponse[]>("/v2/positions")
+    fetchTradingApi<AlpacaPositionResponse[]>("/v2/positions"),
+    fetchTradingApi<AlpacaOrderResponse[]>("/v2/orders?status=open&nested=false")
   ]);
   const account = normalizeAccount(accountPayload);
   const positions = positionsPayload
     .map((position) => normalizePosition(position, account.portfolioValue))
     .sort((left, right) => Math.abs(right.marketValue) - Math.abs(left.marketValue));
+  const openOrders = ordersPayload
+    .map(normalizeOpenOrder)
+    .filter((order) => order.symbol.length > 0)
+    .sort(compareOpenOrders);
   const totalUnrealizedPnl = positions.reduce((total, position) => total + position.unrealizedPnl, 0);
   const totalCostBasis = positions.reduce((total, position) => total + Math.abs(position.costBasis), 0);
   const largestPosition = positions[0];
@@ -79,8 +104,10 @@ export async function fetchPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     generatedAt: new Date().toISOString(),
     account,
     positions,
+    openOrders,
     summary: {
       positionCount: positions.length,
+      openOrderCount: openOrders.length,
       longExposure: positions.filter((position) => position.marketValue > 0).reduce((total, position) => total + position.marketValue, 0),
       shortExposure: positions.filter((position) => position.marketValue < 0).reduce((total, position) => total + Math.abs(position.marketValue), 0),
       cashAllocationPct: account.portfolioValue > 0 ? account.cash / account.portfolioValue : null,
@@ -90,7 +117,7 @@ export async function fetchPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       totalUnrealizedPnlPct: totalCostBasis > 0 ? totalUnrealizedPnl / totalCostBasis : null
     },
     notes: [
-      "Alpaca Trading API の account / positions エンドポイントから取得した口座情報です。",
+      "Alpaca Trading API の account / positions / open orders エンドポイントから取得した口座情報です。",
       "ポジション価格は Alpaca 側の現在値フィールドに基づきます。約定可能価格とは異なる場合があります。"
     ]
   };
@@ -166,6 +193,35 @@ function normalizePosition(payload: AlpacaPositionResponse, portfolioValue: numb
   };
 }
 
+function normalizeOpenOrder(payload: AlpacaOrderResponse): AlpacaOpenOrderSnapshot {
+  return {
+    id: toOptionalString(payload.id),
+    clientOrderId: toOptionalString(payload.client_order_id),
+    symbol: toOptionalString(payload.symbol)?.toUpperCase() ?? "",
+    assetClass: toOptionalString(payload.asset_class),
+    side: toOptionalString(payload.side),
+    type: toOptionalString(payload.type),
+    orderClass: toOptionalString(payload.order_class),
+    status: toOptionalString(payload.status),
+    quantity: toOptionalNumber(payload.qty),
+    notional: toOptionalNumber(payload.notional),
+    limitPrice: toOptionalNumber(payload.limit_price),
+    stopPrice: toOptionalNumber(payload.stop_price),
+    submittedAt: toOptionalString(payload.submitted_at),
+    expiresAt: toOptionalString(payload.expires_at)
+  };
+}
+
+function compareOpenOrders(left: AlpacaOpenOrderSnapshot, right: AlpacaOpenOrderSnapshot) {
+  const leftSubmittedAt = left.submittedAt ? Date.parse(left.submittedAt) : 0;
+  const rightSubmittedAt = right.submittedAt ? Date.parse(right.submittedAt) : 0;
+  if (leftSubmittedAt !== rightSubmittedAt) {
+    return rightSubmittedAt - leftSubmittedAt;
+  }
+
+  return left.symbol.localeCompare(right.symbol);
+}
+
 function getAlpacaCredentials(): AlpacaCredentials {
   const keyId =
     process.env.APCA_API_KEY_ID ?? process.env.ALPACA_API_KEY_ID ?? process.env.ALPACA_API_KEY ?? process.env.ALPACA_KEY_ID;
@@ -202,6 +258,21 @@ function toNullableNumber(value: unknown) {
   }
 
   return toNumber(value);
+}
+
+function toOptionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return undefined;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
 }
 
 function toOptionalString(value: unknown) {
