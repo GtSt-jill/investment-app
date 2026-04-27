@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition, type PointerEvent } from "react";
 
 import { formatNumber, formatPercent, formatPrice } from "@/lib/format";
+import type { PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
 import { DEFAULT_SEMICONDUCTOR_UNIVERSE, type MarketAnalysisResult, type RecommendationItem } from "@/lib/semiconductors/types";
 
 const ratingLabels: Record<RecommendationItem["rating"], string> = {
@@ -20,20 +21,32 @@ const actionLabels: Record<RecommendationItem["action"], string> = {
 };
 
 export function TechnicalDashboard() {
+  const [activeTab, setActiveTab] = useState<"signals" | "portfolio">("signals");
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(() => DEFAULT_SEMICONDUCTOR_UNIVERSE.map((item) => item.symbol));
   const [symbolFilter, setSymbolFilter] = useState("");
   const [lookbackDays, setLookbackDays] = useState(520);
   const [isUniverseOpen, setIsUniverseOpen] = useState(false);
   const [result, setResult] = useState<MarketAnalysisResult | null>(null);
+  const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string>(DEFAULT_SEMICONDUCTOR_UNIVERSE[0].symbol);
   const [error, setError] = useState<string | null>(null);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [isPortfolioPending, startPortfolioTransition] = useTransition();
 
   useEffect(() => {
     runAnalysis();
     // Initial load only. Manual refresh uses the current controls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "portfolio" && portfolio === null && !isPortfolioPending) {
+      runPortfolioRefresh();
+    }
+    // Load portfolio once when the user opens the tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, portfolio]);
 
   const selectedRow = useMemo(() => {
     if (!result) {
@@ -82,8 +95,38 @@ export function TechnicalDashboard() {
     });
   }
 
+  function runPortfolioRefresh() {
+    setPortfolioError(null);
+    startPortfolioTransition(async () => {
+      const response = await fetch("/api/portfolio");
+      const payload = (await response.json()) as PortfolioSnapshot | { error?: string };
+      if (!response.ok) {
+        setPortfolioError("error" in payload && payload.error ? payload.error : "ポートフォリオ取得に失敗しました。");
+        return;
+      }
+
+      setPortfolio(payload as PortfolioSnapshot);
+    });
+  }
+
   return (
     <div className="dashboard">
+      <section className="panel workspace-tabs-panel">
+        <div className="workspace-tabs" aria-label="Dashboard sections">
+          <button type="button" className={activeTab === "signals" ? "active" : ""} onClick={() => setActiveTab("signals")}>
+            銘柄シグナル
+          </button>
+          <button type="button" className={activeTab === "portfolio" ? "active" : ""} onClick={() => setActiveTab("portfolio")}>
+            ポートフォリオ
+          </button>
+        </div>
+        <div className="workspace-tab-meta">
+          {activeTab === "signals" ? "半導体ウォッチリストのテクニカル分析" : "Alpaca Trading API の口座・保有ポジション"}
+        </div>
+      </section>
+
+      {activeTab === "signals" ? (
+        <>
       <section className="panel control-strip">
         <div className="control-head">
           <div>
@@ -289,6 +332,10 @@ export function TechnicalDashboard() {
           <span key={note}>{note}</span>
         ))}
       </section>
+        </>
+      ) : (
+        <PortfolioDashboard snapshot={portfolio} error={portfolioError} isPending={isPortfolioPending} onRefresh={runPortfolioRefresh} />
+      )}
     </div>
   );
 }
@@ -344,6 +391,207 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+function PortfolioDashboard({
+  snapshot,
+  error,
+  isPending,
+  onRefresh
+}: {
+  snapshot: PortfolioSnapshot | null;
+  error: string | null;
+  isPending: boolean;
+  onRefresh: () => void;
+}) {
+  const account = snapshot?.account;
+  const positions = snapshot?.positions ?? [];
+
+  return (
+    <>
+      <section className="panel portfolio-hero-panel">
+        <div className="portfolio-hero-main">
+          <div>
+            <p className="panel-eyebrow">Portfolio</p>
+            <h2>口座サマリー</h2>
+            <p className="muted-copy">
+              {snapshot?.generatedAt ? `${new Date(snapshot.generatedAt).toLocaleString("ja-JP")} 更新` : "Alpaca Trading API から取得します。"}
+            </p>
+          </div>
+          <button type="button" className="primary-button" onClick={onRefresh} disabled={isPending}>
+            {isPending ? "取得中" : "更新"}
+          </button>
+        </div>
+
+        {error ? <p className="error-message">{error}</p> : null}
+
+        {account ? (
+          <>
+            <div className="portfolio-balance">
+              <div>
+                <span>Portfolio Value</span>
+                <strong>{formatPrice(account.portfolioValue)}</strong>
+                <PriceMove value={account.dayPnlPct ?? 0} />
+              </div>
+              <div className="portfolio-status-stack">
+                <StatusChip label={account.status ?? "status unknown"} tone={account.tradingBlocked || account.accountBlocked ? "danger" : "ok"} />
+                {account.patternDayTrader ? <StatusChip label="PDT" tone="warn" /> : null}
+                <StatusChip label={account.currency} tone="neutral" />
+              </div>
+            </div>
+            <section className="summary-grid portfolio-summary-grid">
+              <SummaryCard label="現金" value={formatPrice(account.cash)} />
+              <SummaryCard label="買付余力" value={formatPrice(account.buyingPower)} />
+              <SummaryCard label="当日損益" value={formatSignedCurrency(account.dayPnl)} />
+              <SummaryCard label="保有銘柄" value={formatNumber(snapshot.summary.positionCount, 0)} />
+            </section>
+          </>
+        ) : (
+          <div className="portfolio-empty-state">
+            <strong>{isPending ? "ポートフォリオを取得しています。" : "ポートフォリオデータはまだありません。"}</strong>
+            <span>Trading API の認証情報と `ALPACA_TRADING_BASE_URL` を確認してください。</span>
+          </div>
+        )}
+      </section>
+
+      {snapshot ? (
+        <>
+          <section className="portfolio-layout">
+            <section className="panel allocation-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Allocation</p>
+                  <h2>エクスポージャー</h2>
+                </div>
+              </div>
+              <div className="allocation-stack">
+                <AllocationRow label="Long" value={snapshot.summary.longExposure} total={snapshot.account.portfolioValue} />
+                <AllocationRow label="Short" value={snapshot.summary.shortExposure} total={snapshot.account.portfolioValue} />
+                <AllocationRow label="Cash" value={snapshot.account.cash} total={snapshot.account.portfolioValue} />
+              </div>
+              <div className="metric-grid portfolio-metric-grid">
+                <Metric label="最大保有" value={snapshot.summary.largestPositionSymbol ?? "-"} />
+                <Metric label="最大比率" value={formatNullablePercent(snapshot.summary.largestPositionAllocationPct)} />
+                <Metric label="含み損益" value={formatSignedCurrency(snapshot.summary.totalUnrealizedPnl)} />
+                <Metric label="含み損益率" value={formatNullablePercent(snapshot.summary.totalUnrealizedPnlPct)} />
+              </div>
+            </section>
+
+            <section className="panel portfolio-risk-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Account Risk</p>
+                  <h2>制約と余力</h2>
+                </div>
+              </div>
+              <div className="portfolio-risk-grid">
+                <Metric label="Long MV" value={formatPrice(snapshot.account.longMarketValue)} />
+                <Metric label="Short MV" value={formatPrice(Math.abs(snapshot.account.shortMarketValue))} />
+                <Metric label="Initial Margin" value={formatPrice(snapshot.account.initialMargin)} />
+                <Metric label="Maintenance" value={formatPrice(snapshot.account.maintenanceMargin)} />
+              </div>
+              <div className="account-flags">
+                <StatusChip label="Trading" tone={snapshot.account.tradingBlocked ? "danger" : "ok"} />
+                <StatusChip label="Transfers" tone={snapshot.account.transfersBlocked ? "danger" : "ok"} />
+                <StatusChip label="Account" tone={snapshot.account.accountBlocked ? "danger" : "ok"} />
+              </div>
+            </section>
+          </section>
+
+          <section className="panel table-panel">
+            <div className="panel-header">
+              <div>
+                <p className="panel-eyebrow">Positions</p>
+                <h2>保有ポジション</h2>
+              </div>
+              <span className="muted-copy">{positions.length} positions</span>
+            </div>
+            {positions.length === 0 ? (
+              <p className="muted-copy">現在のオープンポジションはありません。</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Side</th>
+                      <th>Qty</th>
+                      <th>Market Value</th>
+                      <th>Alloc</th>
+                      <th>Avg Entry</th>
+                      <th>Current</th>
+                      <th>Unrealized</th>
+                      <th>Day</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map((position) => (
+                      <tr key={position.symbol}>
+                        <td>
+                          <strong>{position.symbol}</strong>
+                          <span className="table-subtext">{position.assetClass ?? "asset"}</span>
+                        </td>
+                        <td>{position.side}</td>
+                        <td>{formatNumber(position.quantity, 4)}</td>
+                        <td>{formatPrice(position.marketValue)}</td>
+                        <td>{formatNullablePercent(position.allocationPct)}</td>
+                        <td>{formatPrice(position.averageEntryPrice)}</td>
+                        <td>{formatPrice(position.currentPrice)}</td>
+                        <td>
+                          <PnlStack value={position.unrealizedPnl} pct={position.unrealizedPnlPct} />
+                        </td>
+                        <td>
+                          <PnlStack value={position.unrealizedIntradayPnl} pct={position.unrealizedIntradayPnlPct} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="panel disclosure-panel">
+            {snapshot.notes.map((note) => (
+              <span key={note}>{note}</span>
+            ))}
+          </section>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function AllocationRow({ label, value, total }: { label: string; value: number; total: number }) {
+  const pct = total > 0 ? value / total : 0;
+
+  return (
+    <div className="allocation-row">
+      <div>
+        <span>{label}</span>
+        <strong>{formatPrice(value)}</strong>
+      </div>
+      <div className="allocation-bar">
+        <i style={{ width: `${Math.min(100, Math.max(0, pct * 100))}%` }} />
+      </div>
+      <span>{formatPercent(pct)}</span>
+    </div>
+  );
+}
+
+function StatusChip({ label, tone }: { label: string; tone: "ok" | "warn" | "danger" | "neutral" }) {
+  return <span className={`status-chip ${tone}`}>{label}</span>;
+}
+
+function PnlStack({ value, pct }: { value: number; pct: number | null }) {
+  const positive = value >= 0;
+
+  return (
+    <div className={`pnl-stack ${positive ? "positive" : "negative"}`}>
+      <strong>{formatSignedCurrency(value)}</strong>
+      <span>{formatNullablePercent(pct)}</span>
+    </div>
   );
 }
 
@@ -666,6 +914,18 @@ function formatNullable(value: number | null) {
 
 function formatNullablePercent(value: number | null) {
   return value === null ? "-" : formatPercent(value);
+}
+
+function formatSignedCurrency(value: number) {
+  const formatted = formatPrice(Math.abs(value));
+  if (value > 0) {
+    return `+${formatted}`;
+  }
+  if (value < 0) {
+    return `-${formatted}`;
+  }
+
+  return formatted;
 }
 
 function distanceFrom(close: number, reference: number | null) {
