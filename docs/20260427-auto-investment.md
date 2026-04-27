@@ -416,6 +416,23 @@ DB
 - scheduler と手動実行が同時に動かないよう run lock を入れる
 - エラーが連続した場合は kill switch を有効にして自動実行を止める
 
+実装上は `yarn auto-trade` を cron から呼ぶ。これは Next.js の `/api/trading/run` を呼び出す薄い runner であり、次を担当する。
+
+- `AUTO_TRADING_API_URL` に対して `POST /api/trading/run` を送る
+- `AUTO_TRADING_MODE` が `paper` または `dry-run` の場合だけ実行する
+- `AUTO_TRADING_LOCK_PATH` にロックファイルを作り、同時実行を防ぐ
+- `AUTO_TRADING_LOCK_TTL_MS` を過ぎた古いロックは破棄する
+- `AUTO_TRADING_SKIP_MARKET_CLOSED=true` の場合、米国東部時間の土日は実行しない
+
+cron 例:
+
+```cron
+# 米国市場引け後を想定。サーバーの timezone に合わせて調整する。
+30 7 * * 2-6 cd /path/to/investment-app && yarn auto-trade >> logs/auto-trading.log 2>&1
+```
+
+最初は `AUTO_TRADING_MODE=dry-run` で運用し、履歴と blocked 理由を確認してから `AUTO_TRADING_MODE=paper` と `AUTO_TRADING_PAPER_ENABLED=true` に進める。
+
 ## テスト計画
 
 ### ユニットテスト
@@ -508,16 +525,17 @@ DB
 
 実装:
 
-- cron または外部 scheduler を追加
-- 市場カレンダーを確認
-- run の同時実行ロックを追加
-- エラー通知を追加
+- `scripts/auto-trading-run.mjs` を追加し、cron または外部 scheduler から `yarn auto-trade` で実行する
+- 米国東部時間の土日を市場休場扱いとして停止する
+- run の同時実行ロックを追加する
+- API エラー時は非ゼロ終了コードを返し、cron 側で検知できるようにする
 
 完了条件:
 
 - 同時実行されない
-- 市場休場日やデータ不足時に発注しない
-- エラー時に自動停止できる
+- 土日は実行されない
+- API エラー時に非ゼロ終了コードで終了する
+- cron ログに run id、planned / blocked / submitted 件数が残る
 
 ### Phase 5: live mode 検討
 
