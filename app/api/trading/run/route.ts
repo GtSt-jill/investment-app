@@ -13,6 +13,7 @@ import {
   type TradeSide,
   type TradingConfigInput
 } from "@/lib/semiconductors/trading";
+import { appendTradingRunHistory } from "@/lib/semiconductors/trading/history";
 
 export async function POST(request: Request) {
   try {
@@ -66,6 +67,13 @@ export async function POST(request: Request) {
         result.notes.push(`Order log persistence failed after paper execution: ${message}`);
         result.run.notes.push(`Order log persistence failed after paper execution: ${message}`);
       }
+    }
+    try {
+      await appendTradingRunHistory(result);
+    } catch (historyError) {
+      const message = historyError instanceof Error ? historyError.message : "Failed to append trading run history.";
+      result.notes.push(`Run history persistence failed: ${message}`);
+      result.run.notes.push(`Run history persistence failed: ${message}`);
     }
 
     return NextResponse.json(result);

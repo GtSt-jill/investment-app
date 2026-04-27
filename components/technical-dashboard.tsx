@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, useTransition, type PointerEvent } from "
 import { formatNumber, formatPercent, formatPrice } from "@/lib/format";
 import type { PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
 import { DEFAULT_SEMICONDUCTOR_UNIVERSE, type MarketAnalysisResult, type RecommendationItem } from "@/lib/semiconductors/types";
+import type { TradeOrderSubmission, TradePlan, TradingRunRecord, TradingRunSummary } from "@/lib/semiconductors/trading";
 
 const ratingLabels: Record<RecommendationItem["rating"], string> = {
   STRONG_BUY: "強気監視",
@@ -20,8 +21,20 @@ const actionLabels: Record<RecommendationItem["action"], string> = {
   SELL: "新規買い回避"
 };
 
+interface TradingRunResultPayload {
+  run: TradingRunRecord;
+  summary: TradingRunSummary;
+  plans: TradePlan[];
+  submissions?: TradeOrderSubmission[];
+  notes: string[];
+}
+
+interface TradingRunHistoryRecord extends TradingRunResultPayload {
+  savedAt: string;
+}
+
 export function TechnicalDashboard() {
-  const [activeTab, setActiveTab] = useState<"signals" | "portfolio">("signals");
+  const [activeTab, setActiveTab] = useState<"signals" | "portfolio" | "trading">("signals");
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(() => DEFAULT_SEMICONDUCTOR_UNIVERSE.map((item) => item.symbol));
   const [symbolFilter, setSymbolFilter] = useState("");
   const [lookbackDays, setLookbackDays] = useState(520);
@@ -31,8 +44,13 @@ export function TechnicalDashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>(DEFAULT_SEMICONDUCTOR_UNIVERSE[0].symbol);
   const [error, setError] = useState<string | null>(null);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  const [tradingResult, setTradingResult] = useState<TradingRunResultPayload | null>(null);
+  const [tradingRuns, setTradingRuns] = useState<TradingRunHistoryRecord[]>([]);
+  const [tradingError, setTradingError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isPortfolioPending, startPortfolioTransition] = useTransition();
+  const [isTradingPending, startTradingTransition] = useTransition();
+  const [isTradingHistoryPending, startTradingHistoryTransition] = useTransition();
 
   useEffect(() => {
     runAnalysis();
@@ -47,6 +65,14 @@ export function TechnicalDashboard() {
     // Load portfolio once when the user opens the tab.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, portfolio]);
+
+  useEffect(() => {
+    if (activeTab === "trading" && tradingRuns.length === 0 && !isTradingHistoryPending) {
+      loadTradingRuns();
+    }
+    // Load trading history when the user opens the tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, tradingRuns.length]);
 
   const selectedRow = useMemo(() => {
     if (!result) {
@@ -109,6 +135,42 @@ export function TechnicalDashboard() {
     });
   }
 
+  function loadTradingRuns() {
+    startTradingHistoryTransition(async () => {
+      const response = await fetch("/api/trading/runs?limit=12");
+      const payload = (await response.json()) as { runs?: TradingRunHistoryRecord[]; error?: string };
+      if (!response.ok) {
+        setTradingError(payload.error ?? "自動売買履歴の取得に失敗しました。");
+        return;
+      }
+
+      setTradingRuns(payload.runs ?? []);
+    });
+  }
+
+  function runTrading(mode: "dry-run" | "paper") {
+    if (mode === "paper" && !window.confirm("Alpaca paper account に planned 注文を送信します。実行しますか？")) {
+      return;
+    }
+
+    setTradingError(null);
+    startTradingTransition(async () => {
+      const response = await fetch("/api/trading/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, symbols: selectedSymbols, lookbackDays })
+      });
+      const payload = (await response.json()) as TradingRunResultPayload | { error?: string };
+      if (!response.ok) {
+        setTradingError("error" in payload && payload.error ? payload.error : "自動売買実行に失敗しました。");
+        return;
+      }
+
+      setTradingResult(payload as TradingRunResultPayload);
+      loadTradingRuns();
+    });
+  }
+
   return (
     <div className="dashboard">
       <section className="panel workspace-tabs-panel">
@@ -119,9 +181,16 @@ export function TechnicalDashboard() {
           <button type="button" className={activeTab === "portfolio" ? "active" : ""} onClick={() => setActiveTab("portfolio")}>
             ポートフォリオ
           </button>
+          <button type="button" className={activeTab === "trading" ? "active" : ""} onClick={() => setActiveTab("trading")}>
+            自動売買
+          </button>
         </div>
         <div className="workspace-tab-meta">
-          {activeTab === "signals" ? "半導体ウォッチリストのテクニカル分析" : "Alpaca Trading API の口座・保有ポジション"}
+          {activeTab === "signals"
+            ? "半導体ウォッチリストのテクニカル分析"
+            : activeTab === "portfolio"
+              ? "Alpaca Trading API の口座・保有ポジション"
+              : "注文計画、paper 実行、履歴"}
         </div>
       </section>
 
@@ -333,8 +402,18 @@ export function TechnicalDashboard() {
         ))}
       </section>
         </>
-      ) : (
+      ) : activeTab === "portfolio" ? (
         <PortfolioDashboard snapshot={portfolio} error={portfolioError} isPending={isPortfolioPending} onRefresh={runPortfolioRefresh} />
+      ) : (
+        <TradingDashboard
+          result={tradingResult}
+          runs={tradingRuns}
+          error={tradingError}
+          isPending={isTradingPending}
+          isHistoryPending={isTradingHistoryPending}
+          onRun={runTrading}
+          onRefreshHistory={loadTradingRuns}
+        />
       )}
     </div>
   );
@@ -392,6 +471,200 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </article>
   );
+}
+
+function TradingDashboard({
+  result,
+  runs,
+  error,
+  isPending,
+  isHistoryPending,
+  onRun,
+  onRefreshHistory
+}: {
+  result: TradingRunResultPayload | null;
+  runs: TradingRunHistoryRecord[];
+  error: string | null;
+  isPending: boolean;
+  isHistoryPending: boolean;
+  onRun: (mode: "dry-run" | "paper") => void;
+  onRefreshHistory: () => void;
+}) {
+  const plans = result?.plans ?? [];
+  const planned = plans.filter((plan) => plan.status === "planned");
+  const blocked = plans.filter((plan) => plan.status === "blocked");
+  const submissions = result?.submissions ?? [];
+
+  return (
+    <>
+      <section className="panel trading-control-panel">
+        <div className="portfolio-hero-main">
+          <div>
+            <p className="panel-eyebrow">Auto Trading</p>
+            <h2>自動売買実行</h2>
+            <p className="muted-copy">
+              dry-run は注文計画のみ作成します。paper 実行は planned 注文だけ Alpaca paper account に送信します。
+            </p>
+          </div>
+          <div className="run-actions">
+            <button type="button" className="secondary-button" onClick={onRefreshHistory} disabled={isHistoryPending}>
+              {isHistoryPending ? "取得中" : "履歴更新"}
+            </button>
+            <button type="button" className="secondary-button" onClick={() => onRun("dry-run")} disabled={isPending}>
+              Dry Run
+            </button>
+            <button type="button" className="primary-button" onClick={() => onRun("paper")} disabled={isPending}>
+              Paper 実行
+            </button>
+          </div>
+        </div>
+        {error ? <p className="error-message">{error}</p> : null}
+        {result ? (
+          <div className="trading-run-strip">
+            <StatusChip label={result.run.mode} tone={result.run.mode === "paper" ? "warn" : "neutral"} />
+            <StatusChip label={result.run.status} tone={result.run.status === "completed" ? "ok" : "danger"} />
+            <span>{result.run.asOf}</span>
+            <span>{new Date(result.run.generatedAt).toLocaleString("ja-JP")}</span>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="summary-grid">
+        <SummaryCard label="注文計画" value={formatNumber(result?.summary.planCount ?? 0, 0)} />
+        <SummaryCard label="planned" value={formatNumber(result?.summary.plannedCount ?? 0, 0)} />
+        <SummaryCard label="blocked" value={formatNumber(result?.summary.blockedCount ?? 0, 0)} />
+        <SummaryCard label="発注結果" value={formatNumber(submissions.filter((item) => item.status === "submitted").length, 0)} />
+      </section>
+
+      <section className="split-grid trading-split-grid">
+        <section className="panel table-panel">
+          <div className="panel-header">
+            <div>
+              <p className="panel-eyebrow">Plans</p>
+              <h2>注文計画</h2>
+            </div>
+            <span className="muted-copy">{planned.length} planned / {blocked.length} blocked</span>
+          </div>
+          {plans.length === 0 ? (
+            <p className="muted-copy">まだ実行結果はありません。</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Intent</th>
+                    <th>Status</th>
+                    <th>Qty</th>
+                    <th>Notional</th>
+                    <th>理由</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plans.slice(0, 30).map((plan) => (
+                    <tr key={plan.id}>
+                      <td><strong>{plan.symbol}</strong></td>
+                      <td>{plan.intent}</td>
+                      <td><PlanStatusBadge status={plan.status} /></td>
+                      <td>{formatNumber(plan.quantity, 4)}</td>
+                      <td>{formatPrice(plan.notional)}</td>
+                      <td className="reason-cell">{plan.blockReasons[0] ?? plan.reasons[0] ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="panel table-panel">
+          <div className="panel-header">
+            <div>
+              <p className="panel-eyebrow">Submissions</p>
+              <h2>paper 発注結果</h2>
+            </div>
+            <span className="muted-copy">{submissions.length} submissions</span>
+          </div>
+          {submissions.length === 0 ? (
+            <p className="muted-copy">paper 実行後に発注結果が表示されます。</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Status</th>
+                    <th>Alpaca</th>
+                    <th>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {submissions.map((submission) => (
+                    <tr key={`${submission.clientOrderId}-${submission.status}`}>
+                      <td><strong>{submission.symbol}</strong></td>
+                      <td>{submission.side}</td>
+                      <td><PlanStatusBadge status={submission.status} /></td>
+                      <td>{submission.alpacaStatus ?? submission.alpacaOrderId ?? "-"}</td>
+                      <td className="reason-cell">{submission.error ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </section>
+
+      <section className="panel table-panel">
+        <div className="panel-header">
+          <div>
+            <p className="panel-eyebrow">History</p>
+            <h2>実行履歴</h2>
+          </div>
+          <span className="muted-copy">{runs.length} runs</span>
+        </div>
+        {runs.length === 0 ? (
+          <p className="muted-copy">保存された自動売買履歴はまだありません。</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Saved</th>
+                  <th>Mode</th>
+                  <th>Status</th>
+                  <th>Plans</th>
+                  <th>Planned</th>
+                  <th>Blocked</th>
+                  <th>Submitted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => (
+                  <tr key={`${run.run.id}-${run.savedAt}`}>
+                    <td>{new Date(run.savedAt).toLocaleString("ja-JP")}</td>
+                    <td>{run.run.mode}</td>
+                    <td><PlanStatusBadge status={run.run.status} /></td>
+                    <td>{run.summary.planCount}</td>
+                    <td>{run.summary.plannedCount}</td>
+                    <td>{run.summary.blockedCount}</td>
+                    <td>{run.submissions?.filter((item) => item.status === "submitted").length ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function PlanStatusBadge({ status }: { status: string }) {
+  const tone = status === "planned" || status === "submitted" || status === "completed" ? "ok" : status === "blocked" || status === "skipped" ? "warn" : "danger";
+
+  return <StatusChip label={status} tone={tone} />;
 }
 
 function PortfolioDashboard({
