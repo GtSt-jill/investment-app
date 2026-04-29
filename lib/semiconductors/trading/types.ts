@@ -4,6 +4,18 @@ import type { TradingConfig, TradingMode } from "./config";
 
 export type TradeIntent = "OPEN_LONG" | "ADD_LONG" | "REDUCE_LONG" | "CLOSE_LONG" | "NO_ACTION";
 export type TradeSide = "buy" | "sell";
+export type TradeSignalStance = "bullish" | "neutral" | "bearish";
+export type TradeActionReason =
+  | "BUY_SIGNAL"
+  | "HOLD_SIGNAL"
+  | "SELL_AVOID_NEW_BUY"
+  | "STOP_LOSS_EXIT"
+  | "SEVERE_SELL_EXIT"
+  | "WEAK_SELL_REDUCE"
+  | "DEFENSIVE_REGIME_REDUCE"
+  | "OVER_ALLOCATION_REDUCE";
+export type TradeExitReason = "STOP_LOSS" | "SEVERE_SELL_SIGNAL" | "WEAK_SELL_SIGNAL" | "DEFENSIVE_REGIME" | "OVER_ALLOCATION";
+export type TradeScoreGate = "passed" | "blocked" | "not_applicable";
 export type OrderType = "market" | "limit" | "stop" | "stop_limit" | "bracket";
 export type TradePlanStatus = "planned" | "blocked" | "submitted" | "filled" | "rejected" | "cancelled";
 export type BlockReasonSeverity = "info" | "warning" | "error";
@@ -34,6 +46,12 @@ export interface TradeIntentCandidate {
   intent: TradeIntent;
   side: TradeSide | null;
   action: SignalAction;
+  stance: TradeSignalStance;
+  actionReason: TradeActionReason;
+  exitReason: TradeExitReason | null;
+  scoreGate: TradeScoreGate;
+  entryScoreThreshold: number | null;
+  severeSellExitScoreThreshold: number | null;
   score: number;
   currentPrice: number;
   stopLoss: number | null;

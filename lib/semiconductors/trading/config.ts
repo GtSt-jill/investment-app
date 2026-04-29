@@ -16,6 +16,7 @@ export interface RiskConfig {
   minEntryScore: number;
   addMinScore: number;
   sellScoreThreshold: number;
+  severeSellExitScoreThreshold?: number | null;
   topRelativeStrengthPct: number;
   maxEntryPricePremiumPct: number;
   reducePositionPct: number;
@@ -53,6 +54,7 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   minEntryScore: 70,
   addMinScore: 72,
   sellScoreThreshold: 45,
+  severeSellExitScoreThreshold: 15,
   topRelativeStrengthPct: 0.35,
   maxEntryPricePremiumPct: 0.03,
   reducePositionPct: 0.5,

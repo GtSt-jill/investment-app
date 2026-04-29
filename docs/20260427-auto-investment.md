@@ -1,6 +1,7 @@
 # テクニカル分析結果に基づく自動売買機能 計画書
 
 作成日: 2026-04-27
+更新日: 2026-04-29
 
 ## 目的
 
@@ -27,26 +28,38 @@
   - 日足 OHLCV からテクニカル指標を計算する。
   - `RecommendationItem` を生成する。
   - `action` は `BUY` / `HOLD` / `SELL`。
+  - 銘柄別正規化、QQQ / SMH proxy のファクター分析、`scoreAdjustments` を返す。
   - `buyZone` に `idealEntry` / `pullbackEntry` / `stopLoss` / `takeProfit` を持つ。
+- `lib/semiconductors/normalization.ts`
+  - 銘柄自身の履歴に対する ATR / モメンタム / 価格位置のパーセンタイルと Z スコアを計算する。
+- `lib/semiconductors/factors.ts`
+  - CAPM 風の β・α・残差ボラティリティと、汎用マルチファクター回帰を計算する。
+- `lib/semiconductors/backtest.ts`
+  - 過去の分析時点ごとに Action / スコア帯別の将来リターンを検証する。
 - `lib/semiconductors/portfolio.ts`
   - Alpaca Trading API から account / positions を取得する。
   - 口座状態、余力、保有ポジション、損益、配分比率を返す。
+- `lib/semiconductors/trading/*`
+  - 分析結果を売買意図、注文サイズ、注文計画、paper 実行、履歴保存へ変換する。
 - `app/api/semiconductors/route.ts`
   - Alpaca Market Data API から日足を取得し、分析結果を返す。
 - `app/api/portfolio/route.ts`
   - Alpaca Trading API からポートフォリオ情報を返す。
+- `app/api/trading/run/route.ts`
+  - dry-run / paper の自動売買ワークフローを実行する。
+- `app/api/trading/runs/route.ts`
+  - 自動売買履歴を返す。
 
-既存コードには「シグナルを算出する材料」と「口座・ポジションを読む材料」はある。一方で、自動売買に必要な次の要素は未実装である。
+現行実装には、注文計画、リスク制御、重複発注防止、paper 実行、履歴保存、スケジュール実行用 runner が含まれる。引き続き live 実行、より詳細な監査ログ、外部ファクターデータ取得、決算予定日取得は慎重に拡張する。
 
-- 発注判断の状態管理
-- 注文サイズ計算
-- リスク上限
-- 重複発注防止
-- paper / live の明確な切り替え
-- 注文送信
-- 注文結果の保存
-- 自動実行スケジューラ
-- 異常時の停止機構
+残っている主な拡張候補:
+
+- live 実行の段階的な有効化と追加確認 UI
+- 決算予定日 API の連携
+- 外部ファクター系列の取得と保存
+- バックテスト結果の UI 表示
+- シグナル遷移の永続化とヒステリシス
+- 異常時停止ルールの強化
 
 ## 基本方針
 
@@ -144,13 +157,23 @@ live     : live account に発注する
 
 保有中銘柄に対して、次のいずれかを満たす場合に売却候補にする。
 
-- `action === "SELL"` かつ `score < 45`
+- `action === "SELL"` かつ `score < sellScoreThreshold`
+- `action === "SELL"` かつ `score <= severeSellExitScoreThreshold`
 - 現在値が保存済み stop loss を下回った
 - `marketRegime === "defensive"` かつ銘柄スコアが悪化
 - 銘柄配分が上限を超えている
 - 日次または週次の損失制限に近づいている
 
-初期実装では全量売却よりも、`REDUCE_LONG` による部分売却を優先する。損切りラインを明確に割った場合だけ `CLOSE_LONG` を許可する。
+通常の弱い `SELL` は `REDUCE_LONG` による部分売却を優先する。損切りラインを明確に割った場合、または `severeSellExitScoreThreshold` 以下の強い悪化シグナルでは `CLOSE_LONG` を許可する。
+
+現行の `TradeIntentCandidate` は、実行意図を追跡しやすくするために次のメタデータを持つ。
+
+- `stance`: `bullish` / `neutral` / `bearish`
+- `actionReason`: `BUY_SIGNAL`、`SELL_AVOID_NEW_BUY`、`WEAK_SELL_REDUCE`、`SEVERE_SELL_EXIT`、`STOP_LOSS_EXIT` など
+- `exitReason`: `STOP_LOSS`、`SEVERE_SELL_SIGNAL`、`WEAK_SELL_SIGNAL`、`DEFENSIVE_REGIME`、`OVER_ALLOCATION`
+- `scoreGate`: エントリースコア条件を通過したか
+- `entryScoreThreshold`
+- `severeSellExitScoreThreshold`
 
 ## 注文サイズ計算
 

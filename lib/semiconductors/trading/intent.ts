@@ -1,7 +1,17 @@
 import type { AlpacaPositionSnapshot, PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
 import type { MarketAnalysisResult, RecommendationItem } from "@/lib/semiconductors/types";
 import { isSymbolEnabled, type TradingConfig } from "./config";
-import type { OpenOrderSnapshot, TradeBlockReason, TradeIntent, TradeIntentCandidate, TradeSide } from "./types";
+import type {
+  OpenOrderSnapshot,
+  TradeActionReason,
+  TradeBlockReason,
+  TradeExitReason,
+  TradeIntent,
+  TradeIntentCandidate,
+  TradeScoreGate,
+  TradeSide,
+  TradeSignalStance
+} from "./types";
 import { blockReason, roundMoney } from "./utils";
 
 export function generateTradeIntents(
@@ -56,22 +66,53 @@ function buildIntentCandidate(
 
   if (recommendation.action === "BUY") {
     const intendedIntent = position === null ? "OPEN_LONG" : "ADD_LONG";
+    const entryScoreThreshold = position === null ? config.risk.minEntryScore : config.risk.addMinScore;
     blockReasons.push(...evaluateBuySignal(recommendation, position, analysis, config, relativeStrengthCutoff));
 
-    return createCandidate(recommendation, position, intendedIntent, "buy", currentPrice, blockReasons, [
-      ...baseReasons,
-      position === null ? "BUY signal can become a new long entry if all risk checks pass." : "BUY signal can add to an existing long if sizing and risk checks pass."
-    ]);
+    return createCandidate(
+      recommendation,
+      position,
+      intendedIntent,
+      "buy",
+      currentPrice,
+      blockReasons,
+      [
+        ...baseReasons,
+        position === null ? "BUY signal can become a new long entry if all risk checks pass." : "BUY signal can add to an existing long if sizing and risk checks pass."
+      ],
+      {
+        stance: "bullish",
+        actionReason: "BUY_SIGNAL",
+        exitReason: null,
+        scoreGate: recommendation.score < entryScoreThreshold ? "blocked" : "passed",
+        entryScoreThreshold,
+        severeSellExitScoreThreshold: activeSevereSellExitScoreThreshold(config)
+      }
+    );
   }
 
-  if (position !== null && shouldReducePosition(recommendation, position, analysis, config)) {
-    const stopLoss = validPositivePrice(recommendation.buyZone.stopLoss);
-    const intent: TradeIntent = stopLoss !== null && currentPrice <= stopLoss ? "CLOSE_LONG" : "REDUCE_LONG";
-
-    return createCandidate(recommendation, position, intent, "sell", currentPrice, blockReasons, [
-      ...baseReasons,
-      intent === "CLOSE_LONG" ? "Current price is at or below the technical stop loss." : "Position should be reduced under the configured sell or portfolio risk rules."
-    ]);
+  const exitDecision = position === null ? null : shouldReducePosition(recommendation, position, analysis, config);
+  if (position !== null && exitDecision !== null) {
+    return createCandidate(
+      recommendation,
+      position,
+      exitDecision.intent,
+      "sell",
+      currentPrice,
+      blockReasons,
+      [
+        ...baseReasons,
+        exitDecision.message
+      ],
+      {
+        stance: stanceForRecommendation(recommendation),
+        actionReason: exitDecision.actionReason,
+        exitReason: exitDecision.exitReason,
+        scoreGate: "not_applicable",
+        entryScoreThreshold: null,
+        severeSellExitScoreThreshold: activeSevereSellExitScoreThreshold(config)
+      }
+    );
   }
 
   blockReasons.push(
@@ -83,10 +124,26 @@ function buildIntentCandidate(
     )
   );
 
-  return createCandidate(recommendation, position, "NO_ACTION", null, currentPrice, blockReasons, [
-    ...baseReasons,
-    "No actionable trading intent was generated for this symbol."
-  ]);
+  return createCandidate(
+    recommendation,
+    position,
+    "NO_ACTION",
+    null,
+    currentPrice,
+    blockReasons,
+    [
+      ...baseReasons,
+      "No actionable trading intent was generated for this symbol."
+    ],
+    {
+      stance: stanceForRecommendation(recommendation),
+      actionReason: noActionReason(recommendation),
+      exitReason: null,
+      scoreGate: "not_applicable",
+      entryScoreThreshold: null,
+      severeSellExitScoreThreshold: activeSevereSellExitScoreThreshold(config)
+    }
+  );
 }
 
 function evaluateBuySignal(
@@ -189,16 +246,61 @@ function shouldReducePosition(
   position: AlpacaPositionSnapshot,
   analysis: MarketAnalysisResult,
   config: TradingConfig
-) {
+): PositionExitDecision | null {
   const currentPrice = recommendation.indicators.close;
   const stopLoss = validPositivePrice(recommendation.buyZone.stopLoss);
+  const severeSellExitScoreThreshold = activeSevereSellExitScoreThreshold(config);
 
-  return (
-    (recommendation.action === "SELL" && recommendation.score < config.risk.sellScoreThreshold) ||
-    (stopLoss !== null && currentPrice <= stopLoss) ||
-    ((recommendation.marketRegime ?? analysis.summary.marketRegime) === "defensive" && recommendation.score < config.risk.minEntryScore) ||
-    (position.allocationPct ?? 0) > config.risk.maxPositionPct
-  );
+  if (stopLoss !== null && currentPrice <= stopLoss) {
+    return {
+      intent: "CLOSE_LONG",
+      actionReason: "STOP_LOSS_EXIT",
+      exitReason: "STOP_LOSS",
+      message: "Current price is at or below the technical stop loss."
+    };
+  }
+
+  if (
+    recommendation.action === "SELL" &&
+    severeSellExitScoreThreshold !== null &&
+    recommendation.score <= severeSellExitScoreThreshold
+  ) {
+    return {
+      intent: "CLOSE_LONG",
+      actionReason: "SEVERE_SELL_EXIT",
+      exitReason: "SEVERE_SELL_SIGNAL",
+      message: `SELL score is at or below the configured severe-sell exit threshold ${severeSellExitScoreThreshold}.`
+    };
+  }
+
+  if (recommendation.action === "SELL" && recommendation.score < config.risk.sellScoreThreshold) {
+    return {
+      intent: "REDUCE_LONG",
+      actionReason: "WEAK_SELL_REDUCE",
+      exitReason: "WEAK_SELL_SIGNAL",
+      message: "Position should be reduced under the configured sell score threshold."
+    };
+  }
+
+  if ((recommendation.marketRegime ?? analysis.summary.marketRegime) === "defensive" && recommendation.score < config.risk.minEntryScore) {
+    return {
+      intent: "REDUCE_LONG",
+      actionReason: "DEFENSIVE_REGIME_REDUCE",
+      exitReason: "DEFENSIVE_REGIME",
+      message: "Position should be reduced because the market regime is defensive and the score is below the entry threshold."
+    };
+  }
+
+  if ((position.allocationPct ?? 0) > config.risk.maxPositionPct) {
+    return {
+      intent: "REDUCE_LONG",
+      actionReason: "OVER_ALLOCATION_REDUCE",
+      exitReason: "OVER_ALLOCATION",
+      message: "Position should be reduced because allocation is above the configured cap."
+    };
+  }
+
+  return null;
 }
 
 function createCandidate(
@@ -208,7 +310,15 @@ function createCandidate(
   side: TradeSide | null,
   currentPrice: number,
   blockReasons: TradeBlockReason[],
-  reasons: string[]
+  reasons: string[],
+  metadata: {
+    stance: TradeSignalStance;
+    actionReason: TradeActionReason;
+    exitReason: TradeExitReason | null;
+    scoreGate: TradeScoreGate;
+    entryScoreThreshold: number | null;
+    severeSellExitScoreThreshold: number | null;
+  }
 ): TradeIntentCandidate {
   return {
     symbol: recommendation.symbol,
@@ -217,6 +327,12 @@ function createCandidate(
     intent,
     side,
     action: recommendation.action,
+    stance: metadata.stance,
+    actionReason: metadata.actionReason,
+    exitReason: metadata.exitReason,
+    scoreGate: metadata.scoreGate,
+    entryScoreThreshold: metadata.entryScoreThreshold,
+    severeSellExitScoreThreshold: metadata.severeSellExitScoreThreshold,
     score: recommendation.score,
     currentPrice,
     stopLoss: validPositivePrice(recommendation.buyZone.stopLoss),
@@ -227,6 +343,43 @@ function createCandidate(
     reasons,
     blockReasons
   };
+}
+
+interface PositionExitDecision {
+  intent: Extract<TradeIntent, "REDUCE_LONG" | "CLOSE_LONG">;
+  actionReason: Extract<
+    TradeActionReason,
+    "STOP_LOSS_EXIT" | "SEVERE_SELL_EXIT" | "WEAK_SELL_REDUCE" | "DEFENSIVE_REGIME_REDUCE" | "OVER_ALLOCATION_REDUCE"
+  >;
+  exitReason: TradeExitReason;
+  message: string;
+}
+
+function stanceForRecommendation(recommendation: RecommendationItem): TradeSignalStance {
+  switch (recommendation.action) {
+    case "BUY":
+      return "bullish";
+    case "SELL":
+      return "bearish";
+    case "HOLD":
+      return "neutral";
+  }
+}
+
+function noActionReason(recommendation: RecommendationItem): TradeActionReason {
+  switch (recommendation.action) {
+    case "BUY":
+      return "BUY_SIGNAL";
+    case "SELL":
+      return "SELL_AVOID_NEW_BUY";
+    case "HOLD":
+      return "HOLD_SIGNAL";
+  }
+}
+
+function activeSevereSellExitScoreThreshold(config: TradingConfig) {
+  const threshold = config.risk.severeSellExitScoreThreshold;
+  return typeof threshold === "number" && Number.isFinite(threshold) ? threshold : null;
 }
 
 function chooseTargetEntryPrice(recommendation: RecommendationItem) {

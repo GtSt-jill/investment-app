@@ -18,14 +18,18 @@ Alpaca API を使って、半導体・AI 関連銘柄のテクニカルシグナ
   - ATR
   - 出来高比率
   - 20 / 63 / 126 営業日モメンタム
+  - 銘柄自身の履歴に対する ATR / モメンタム / 価格位置のパーセンタイルと Z スコア
+  - QQQ / SMH を proxy にした CAPM 風の β・α・残差ボラティリティ
 - スコアリング:
   - トレンド
   - モメンタム
   - 相対強度
   - リスク
   - 出来高
+  - 銘柄別正規化とファクター分析による保守的なスコア調整
 - 銘柄詳細:
   - ローソク足チャート
+  - 正規化テクニカル指標とスコア調整
   - 買値目安
   - 押し目目安
   - 損切り目安
@@ -64,11 +68,15 @@ lib/
   semiconductors/
     alpaca.ts                # Market Data API クライアント
     analyzer.ts              # テクニカル分析とスコアリング
+    backtest.ts              # シグナル別の将来リターン検証
+    factors.ts               # CAPM / マルチファクター分析ユーティリティ
     indicators.ts            # SMA / RSI / MACD / ATR などの指標計算
+    normalization.ts         # 銘柄別パーセンタイル / Z スコア
     portfolio.ts             # Trading API クライアントとポートフォリオ整形
     types.ts                 # 分析結果の型と対象銘柄
 docs/
   technical-logic.md         # 分析ロジックの詳細
+  trading-intent-refinement.md # 売買意図の分類と実行ルール
 tests/
   *.test.ts                  # 指標計算と分析ロジックのテスト
 ```
@@ -178,6 +186,10 @@ finalScore =
 + riskScore * 0.15
 + volumeScore * 0.10
 ```
+
+このベーススコアに対して、銘柄自身の履歴に対する正規化指標と、QQQ / SMH へのファクター分析結果を小さく加減点します。調整だけで `BUY` 閾値をまたがないようにし、既存のテクニカル判定を補助する用途に限定しています。
+
+バックテスト用に `runSignalBacktest()` も用意しており、過去の分析時点ごとに 20 / 63 営業日先リターン、勝率、最大逆行、最大ドローダウンを Action やスコア帯別に集計できます。
 
 詳細は [docs/technical-logic.md](docs/technical-logic.md) を参照してください。
 

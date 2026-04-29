@@ -11,16 +11,21 @@ import {
 import {
   DEFAULT_SEMICONDUCTOR_UNIVERSE,
   type IndicatorSnapshot,
+  type FactorAnalysisSnapshot,
   type MarketAnalysisResult,
   type MarketRegime,
+  type NormalizedTechnicalSnapshot,
   type PriceBar,
   type RecommendationItem,
+  type ScoreAdjustment,
   type ScoreBreakdown,
   type SignalAction,
   type SignalChange,
   type SignalRating,
   type SymbolProfile
 } from "@/lib/semiconductors/types";
+import { normalizeSymbolSnapshot } from "@/lib/semiconductors/normalization";
+import { calculateCapmExposure } from "@/lib/semiconductors/factors";
 
 export const MINIMUM_BARS = 252;
 
@@ -68,12 +73,23 @@ export function analyzeSemiconductors(
   universe: SymbolProfile[] = [...DEFAULT_SEMICONDUCTOR_UNIVERSE],
   options: AnalyzeSemiconductorsOptions = {}
 ): MarketAnalysisResult {
+  const normalizedMarketBars = {
+    semiconductor: normalizeBars(options.marketBars?.semiconductor ?? []),
+    qqq: normalizeBars(options.marketBars?.qqq ?? [])
+  };
   const baseRows = universe
-    .map((profile) => buildRecommendation(profile, normalizeBars(barsBySymbol[profile.symbol] ?? []), options.previousActions?.[profile.symbol]))
+    .map((profile) =>
+      buildRecommendation(
+        profile,
+        normalizeBars(barsBySymbol[profile.symbol] ?? []),
+        options.previousActions?.[profile.symbol],
+        normalizedMarketBars
+      )
+    )
     .filter((row): row is RecommendationItem => row !== null);
   const analyzedSymbols = new Set(baseRows.map((row) => row.symbol));
   const excludedSymbols = universe.map((profile) => profile.symbol).filter((symbol) => !analyzedSymbols.has(symbol));
-  const marketRegime = calculateMarketRegime(options.marketBars);
+  const marketRegime = calculateMarketRegime(normalizedMarketBars);
 
   const recommendations = applyRelativeStrengthScores(baseRows)
     .map((row) => applyMarketRegimeFilter(row, marketRegime))
@@ -116,7 +132,12 @@ export function analyzeSemiconductors(
   };
 }
 
-function buildRecommendation(profile: SymbolProfile, bars: PriceBar[], previousAction?: SignalAction): RecommendationItem | null {
+function buildRecommendation(
+  profile: SymbolProfile,
+  bars: PriceBar[],
+  previousAction?: SignalAction,
+  marketBars?: AnalyzeSemiconductorsOptions["marketBars"]
+): RecommendationItem | null {
   if (bars.length < MINIMUM_BARS) {
     return null;
   }
@@ -170,10 +191,16 @@ function buildRecommendation(profile: SymbolProfile, bars: PriceBar[], previousA
   };
 
   const scoreBreakdown = buildBaseScoreBreakdown(indicators);
-  const score = calculateFinalScore(scoreBreakdown);
+  const normalizedTechnicals = buildNormalizedTechnicalSnapshot(bars);
+  const factorAnalysis = buildFactorAnalysisSnapshot(bars, marketBars);
+  const scoreAdjustments = [
+    ...buildNormalizedScoreAdjustments(normalizedTechnicals),
+    ...buildFactorScoreAdjustments(factorAnalysis)
+  ];
+  const score = calculateAdjustedScore(scoreBreakdown, scoreAdjustments);
   const rating = ratingFromScore(score);
   const action = actionFromRating(rating);
-  const explanation = buildExplanation(indicators, scoreBreakdown);
+  const explanation = buildExplanation(indicators, scoreBreakdown, normalizedTechnicals);
 
   return {
     symbol: profile.symbol,
@@ -186,10 +213,13 @@ function buildRecommendation(profile: SymbolProfile, bars: PriceBar[], previousA
     signalChange: calculateSignalChange(previousAction, action),
     score,
     scoreBreakdown,
+    scoreAdjustments,
     rank: 0,
     relativeStrengthRank: 0,
     earningsDate: profile.earningsDate,
     indicators,
+    normalizedTechnicals,
+    factorAnalysis,
     reasons: explanation.reasons,
     risks: explanation.risks,
     buyZone: buildBuyZone(indicators),
@@ -274,6 +304,18 @@ function calculateFinalScore(scoreBreakdown: ScoreBreakdown) {
   return clamp(Math.round(weightedScore), 0, 100);
 }
 
+function calculateAdjustedScore(scoreBreakdown: ScoreBreakdown, adjustments: ScoreAdjustment[] = []) {
+  const baseScore = calculateFinalScore(scoreBreakdown);
+  const adjustmentTotal = adjustments.reduce((total, adjustment) => total + adjustment.value, 0);
+  const adjustedScore = clamp(Math.round(baseScore + adjustmentTotal), 0, 100);
+
+  if (baseScore < RATING_THRESHOLDS.buy && adjustedScore >= RATING_THRESHOLDS.buy) {
+    return RATING_THRESHOLDS.buy - 1;
+  }
+
+  return adjustedScore;
+}
+
 function applyRelativeStrengthScores(rows: RecommendationItem[]) {
   const rankedByMomentum = [...rows].sort(
     (left, right) => (right.indicators.momentum63 ?? -Infinity) - (left.indicators.momentum63 ?? -Infinity)
@@ -288,7 +330,7 @@ function applyRelativeStrengthScores(rows: RecommendationItem[]) {
       ...row.scoreBreakdown,
       relativeStrengthScore: Math.round(relativeStrengthScore)
     };
-    const score = calculateFinalScore(scoreBreakdown);
+    const score = calculateAdjustedScore(scoreBreakdown, row.scoreAdjustments);
     const rating = ratingFromScore(score);
     const action = actionFromRating(rating);
     const reasons = [...row.reasons];
@@ -320,6 +362,12 @@ function applyMarketRegimeFilter(row: RecommendationItem, marketRegime: MarketRe
     return { ...row, marketRegime };
   }
 
+  const marketAdjustment: ScoreAdjustment = {
+    source: "market-regime",
+    label: "Defensive market regime",
+    value: -penalty
+  };
+  const scoreAdjustments = [...(row.scoreAdjustments ?? []), marketAdjustment];
   const score = clamp(row.score - penalty, 0, 100);
   const rating = ratingFromScore(score);
   const action = actionFromRating(rating);
@@ -332,6 +380,7 @@ function applyMarketRegimeFilter(row: RecommendationItem, marketRegime: MarketRe
     ...row,
     marketRegime,
     score,
+    scoreAdjustments,
     rating,
     action,
     signalChange: calculateSignalChange(row.previousAction, action),
@@ -474,7 +523,11 @@ function buildChart(bars: PriceBar[], closes: number[]) {
   });
 }
 
-function buildExplanation(indicators: IndicatorSnapshot, scoreBreakdown: ScoreBreakdown) {
+function buildExplanation(
+  indicators: IndicatorSnapshot,
+  scoreBreakdown: ScoreBreakdown,
+  normalizedTechnicals?: NormalizedTechnicalSnapshot
+) {
   const reasons: string[] = [];
   const risks: string[] = [];
 
@@ -506,10 +559,123 @@ function buildExplanation(indicators: IndicatorSnapshot, scoreBreakdown: ScoreBr
     risks.push("出来高面では買いの裏付けが弱い、または売り圧力が強い");
   }
 
+  if ((normalizedTechnicals?.momentum63Percentile ?? 50) >= 75) {
+    reasons.push("銘柄自身の過去レンジ比でも中期モメンタムが上位");
+  } else if ((normalizedTechnicals?.momentum63Percentile ?? 50) <= 25) {
+    risks.push("銘柄自身の過去レンジ比で中期モメンタムが下位");
+  }
+
+  if ((normalizedTechnicals?.atrPctPercentile ?? 50) >= 85) {
+    risks.push("銘柄自身の過去レンジ比でATRが高く、通常より値幅が大きい");
+  }
+
   return {
     reasons: unique(reasons).slice(0, 5),
     risks: risks.length > 0 ? unique(risks).slice(0, 4) : ["決算日と指数全体の地合いは別途確認が必要"]
   };
+}
+
+function buildNormalizedTechnicalSnapshot(bars: PriceBar[]): NormalizedTechnicalSnapshot {
+  const normalized = normalizeSymbolSnapshot(bars, {
+    lookback: 252,
+    minSamples: 60,
+    atrLength: 14,
+    zScoreWindow: 126
+  });
+
+  return {
+    closePercentileRank: normalized.closePercentileRank,
+    closeZScore: normalized.closeZScore,
+    atrPctPercentile: normalized.atrPercentile,
+    momentum20Percentile: normalized.momentum20Percentile,
+    momentum63Percentile: normalized.momentum63Percentile,
+    momentum126Percentile: normalized.momentum126Percentile
+  };
+}
+
+function buildNormalizedScoreAdjustments(normalized: NormalizedTechnicalSnapshot): ScoreAdjustment[] {
+  const adjustments: ScoreAdjustment[] = [];
+
+  if (normalized.momentum63Percentile !== null) {
+    if (normalized.momentum63Percentile >= 80) {
+      adjustments.push({ source: "normalization", label: "Own-history 63D momentum leadership", value: 3 });
+    } else if (normalized.momentum63Percentile <= 20) {
+      adjustments.push({ source: "normalization", label: "Own-history 63D momentum weakness", value: -3 });
+    }
+  }
+
+  if (normalized.momentum126Percentile !== null) {
+    if (normalized.momentum126Percentile >= 75) {
+      adjustments.push({ source: "normalization", label: "Own-history 126D momentum leadership", value: 2 });
+    } else if (normalized.momentum126Percentile <= 25) {
+      adjustments.push({ source: "normalization", label: "Own-history 126D momentum weakness", value: -2 });
+    }
+  }
+
+  if (normalized.atrPctPercentile !== null) {
+    if (normalized.atrPctPercentile >= 90) {
+      adjustments.push({ source: "normalization", label: "Own-history ATR extreme", value: -4 });
+    } else if (normalized.atrPctPercentile >= 80) {
+      adjustments.push({ source: "normalization", label: "Own-history ATR elevated", value: -2 });
+    } else if (normalized.atrPctPercentile <= 35) {
+      adjustments.push({ source: "normalization", label: "Own-history ATR contained", value: 1 });
+    }
+  }
+
+  if (normalized.closeZScore !== null && normalized.closeZScore > 2.5) {
+    adjustments.push({ source: "normalization", label: "Price extended versus own history", value: -2 });
+  }
+
+  return adjustments;
+}
+
+function buildFactorAnalysisSnapshot(
+  bars: PriceBar[],
+  marketBars?: AnalyzeSemiconductorsOptions["marketBars"]
+): FactorAnalysisSnapshot | undefined {
+  const qqqBars = marketBars?.qqq ?? [];
+  const semiconductorBars = marketBars?.semiconductor ?? [];
+
+  if (qqqBars.length < 80 && semiconductorBars.length < 80) {
+    return undefined;
+  }
+
+  const marketExposure =
+    qqqBars.length >= 80 ? calculateCapmExposure(bars, qqqBars, { minObservations: 60 }) : null;
+  const sectorExposure =
+    semiconductorBars.length >= 80 ? calculateCapmExposure(bars, semiconductorBars, { minObservations: 60 }) : null;
+  const factorScores = [marketExposure?.factorScore, sectorExposure?.factorScore].filter((value): value is number =>
+    Number.isFinite(value)
+  );
+
+  return {
+    marketBeta: marketExposure?.beta ?? null,
+    sectorBeta: sectorExposure?.beta ?? null,
+    alpha: marketExposure?.annualizedAlpha ?? marketExposure?.alpha ?? null,
+    residualVolatility: marketExposure?.annualizedResidualVolatility ?? marketExposure?.residualVolatility ?? null,
+    factorScore: factorScores.length === 0 ? null : Math.round(average(factorScores, factorScores.length) ?? 50),
+    observations: Math.max(marketExposure?.observations ?? 0, sectorExposure?.observations ?? 0)
+  };
+}
+
+function buildFactorScoreAdjustments(factorAnalysis: FactorAnalysisSnapshot | undefined): ScoreAdjustment[] {
+  if (!factorAnalysis || factorAnalysis.factorScore === null || factorAnalysis.observations < 60) {
+    return [];
+  }
+
+  const adjustments: ScoreAdjustment[] = [];
+
+  if (factorAnalysis.factorScore >= 75) {
+    adjustments.push({ source: "factor", label: "Positive factor-adjusted profile", value: 2 });
+  } else if (factorAnalysis.factorScore <= 35) {
+    adjustments.push({ source: "factor", label: "Weak factor-adjusted profile", value: -2 });
+  }
+
+  if ((factorAnalysis.marketBeta ?? 1) > 1.8 && (factorAnalysis.residualVolatility ?? 0) > 0.55) {
+    adjustments.push({ source: "factor", label: "High beta and residual volatility", value: -2 });
+  }
+
+  return adjustments;
 }
 
 function ratingFromScore(score: number): SignalRating {

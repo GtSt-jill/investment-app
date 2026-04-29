@@ -306,6 +306,7 @@ export function TechnicalDashboard() {
             <div className="detail-copy">
               <SecuritySnapshot row={selectedRow} />
               <ScoreBreakdownPanel row={selectedRow} />
+              <NormalizedTechnicalPanel row={selectedRow} />
               <div className="metric-grid price-metric-grid">
                 <Metric label="20営業日" value={formatNullablePercent(selectedRow.indicators.momentum20)} />
                 <Metric label="63営業日" value={formatNullablePercent(selectedRow.indicators.momentum63)} />
@@ -966,6 +967,50 @@ function ScoreBreakdownPanel({ row }: { row: RecommendationItem }) {
   );
 }
 
+function NormalizedTechnicalPanel({ row }: { row: RecommendationItem }) {
+  const normalized = row.normalizedTechnicals;
+  const adjustments = row.scoreAdjustments ?? [];
+
+  if (!normalized && adjustments.length === 0) {
+    return null;
+  }
+
+  const metrics = normalized
+    ? [
+        ["ATR %ile", formatNullablePercentileRank(normalized.atrPctPercentile)],
+        ["63D mom %ile", formatNullablePercentileRank(normalized.momentum63Percentile)],
+        ["126D mom %ile", formatNullablePercentileRank(normalized.momentum126Percentile)],
+        ["Close z", formatNullableZScore(normalized.closeZScore)]
+      ]
+    : [];
+
+  return (
+    <div className="normalized-panel">
+      {metrics.length > 0 ? (
+        <div className="normalized-metrics" aria-label="Normalized technical metrics">
+          {metrics.map(([label, value]) => (
+            <div key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {adjustments.length > 0 ? (
+        <div className="adjustment-list" aria-label="Score adjustments">
+          {adjustments.map((adjustment) => (
+            <div key={`${adjustment.source}-${adjustment.label}-${adjustment.value}`} className={adjustment.value >= 0 ? "positive" : "negative"}>
+              <span>{adjustment.label}</span>
+              <strong>{formatSignedAdjustment(adjustment.value)}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function RecommendationList({ title, rows, emptyText }: { title: string; rows: RecommendationItem[]; emptyText: string }) {
   return (
     <section className="panel recommendation-panel">
@@ -1256,6 +1301,25 @@ function formatOptionalDateTime(value: string | undefined) {
 
 function formatNullablePercent(value: number | null) {
   return value === null ? "-" : formatPercent(value);
+}
+
+function formatNullablePercentileRank(value: number | null) {
+  return value === null ? "-" : `${formatNumber(value, 0)}`;
+}
+
+function formatNullableZScore(value: number | null) {
+  return value === null ? "-" : formatNumber(value, 2);
+}
+
+function formatSignedAdjustment(value: number) {
+  if (value > 0) {
+    return `+${formatNumber(value, 0)}`;
+  }
+  if (value < 0) {
+    return formatNumber(value, 0);
+  }
+
+  return "0";
 }
 
 function formatSignedCurrency(value: number) {

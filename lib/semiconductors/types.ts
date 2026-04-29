@@ -174,11 +174,14 @@ export interface RecommendationItem {
   signalChange: SignalChange;
   score: number;
   scoreBreakdown: ScoreBreakdown;
+  scoreAdjustments?: ScoreAdjustment[];
   rank: number;
   relativeStrengthRank: number;
   marketRegime?: MarketRegime;
   earningsDate?: string;
   indicators: IndicatorSnapshot;
+  normalizedTechnicals?: NormalizedTechnicalSnapshot;
+  factorAnalysis?: FactorAnalysisSnapshot;
   reasons: string[];
   risks: string[];
   buyZone: {
@@ -197,6 +200,32 @@ export interface RecommendationItem {
     sma20: number | null;
     sma50: number | null;
   }>;
+}
+
+export type ScoreAdjustmentSource = "normalization" | "factor" | "market-regime" | "earnings" | "signal-stability";
+
+export interface ScoreAdjustment {
+  source: ScoreAdjustmentSource;
+  label: string;
+  value: number;
+}
+
+export interface NormalizedTechnicalSnapshot {
+  closePercentileRank: number | null;
+  closeZScore: number | null;
+  atrPctPercentile: number | null;
+  momentum63Percentile: number | null;
+  momentum126Percentile: number | null;
+  momentum20Percentile: number | null;
+}
+
+export interface FactorAnalysisSnapshot {
+  marketBeta: number | null;
+  sectorBeta: number | null;
+  alpha: number | null;
+  residualVolatility: number | null;
+  factorScore: number | null;
+  observations: number;
 }
 
 export interface MarketAnalysisResult {
