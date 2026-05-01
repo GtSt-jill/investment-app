@@ -1,103 +1,142 @@
-export const TARGET_SYMBOLS = [
-  "AAOI",
-  "AAPL",
-  "ACLS",
-  "ADI",
-  "AEIS",
-  "ALAB",
-  "ALGM",
-  "AMAT",
-  "AMBA",
-  "AMD",
-  "AMKR",
-  "AMZN",
-  "ARM",
-  "ASML",
-  "ASX",
-  "AVGO",
-  "CAMT",
-  "CLS",
-  "COHR",
-  "COHU",
-  "CRUS",
-  "CSIQ",
-  "DIOD",
-  "DQ",
-  "ENPH",
-  "ENTG",
-  "FN",
-  "FORM",
-  "FSLR",
-  "GFS",
-  "GOOGL",
-  "HIMX",
-  "IIVI",
-  "IMOS",
-  "INTC",
-  "IPGP",
-  "JKS",
-  "KLAC",
-  "LASR",
-  "LITE",
-  "LRCX",
-  "LSCC",
-  "MCHP",
-  "META",
-  "MKSI",
-  "MPWR",
-  "MRVL",
-  "MSFT",
-  "MSTR",
-  "MTSI",
-  "MU",
-  "MXL",
-  "NOVT",
-  "NTAP",
-  "NVDA",
-  "NVTS",
-  "NXPI",
-  "ONTO",
-  "ON",
-  "OUST",
-  "PI",
-  "PLTR",
-  "POWI",
-  "PSTG",
-  "QCOM",
-  "QRVO",
-  "RMBS",
-  "RUN",
-  "SANM",
-  "SIMO",
-  "SITM",
-  "SLAB",
-  "SMCI",
-  "SMTC",
-  "SPWR",
-  "STM",
-  "STX",
-  "SWKS",
-  "SYNA",
-  "TEL",
-  "TER",
-  "TRMB",
-  "TSEM",
-  "TSLA",
-  "TSM",
-  "TXN",
-  "UMC",
-  "VECO",
-  "VIAV",
-  "VSH",
-  "WDC",
-  "WOLF"
+export const SECURITY_CATEGORIES = [
+  { id: "semiconductors", label: "半導体", description: "半導体、製造装置、EDA、サプライチェーン" },
+  { id: "mega-tech", label: "大型テック", description: "プラットフォーム、クラウド、消費者向けテック" },
+  { id: "software-ai", label: "AI・ソフトウェア", description: "AI、SaaS、データ分析、サイバーセキュリティ" },
+  { id: "cloud-data", label: "クラウド・データ", description: "ストレージ、ネットワーク、データ基盤" },
+  { id: "clean-energy", label: "クリーンエネルギー", description: "太陽光、EV、電力・蓄電関連" },
+  { id: "industrials", label: "産業・自動化", description: "産業テック、計測、製造自動化" }
 ] as const;
 
-export const DEFAULT_SEMICONDUCTOR_UNIVERSE = TARGET_SYMBOLS.map((symbol) => ({
-  symbol,
-  name: symbol,
-  segment: "Semiconductor Watchlist"
-}));
+export type SecurityCategoryId = (typeof SECURITY_CATEGORIES)[number]["id"];
+
+type SecurityUniverseInput = Readonly<{
+  category: SecurityCategoryId;
+  symbols: readonly string[];
+}>;
+
+const SECURITY_UNIVERSE_INPUTS = [
+  {
+    category: "semiconductors",
+    symbols: [
+      "AAOI",
+      "ACLS",
+      "ADI",
+      "AEIS",
+      "ALAB",
+      "ALGM",
+      "AMAT",
+      "AMBA",
+      "AMD",
+      "AMKR",
+      "ARM",
+      "ASML",
+      "ASX",
+      "AVGO",
+      "CAMT",
+      "COHR",
+      "COHU",
+      "CRUS",
+      "DIOD",
+      "ENTG",
+      "FN",
+      "FORM",
+      "GFS",
+      "HIMX",
+      "IIVI",
+      "IMOS",
+      "INTC",
+      "KLAC",
+      "LASR",
+      "LITE",
+      "LRCX",
+      "LSCC",
+      "MCHP",
+      "MKSI",
+      "MPWR",
+      "MRVL",
+      "MTSI",
+      "MU",
+      "MXL",
+      "NVDA",
+      "NVTS",
+      "NXPI",
+      "ONTO",
+      "ON",
+      "PI",
+      "POWI",
+      "QCOM",
+      "QRVO",
+      "RMBS",
+      "SIMO",
+      "SITM",
+      "SLAB",
+      "SMCI",
+      "SMTC",
+      "STM",
+      "SWKS",
+      "SYNA",
+      "TER",
+      "TSEM",
+      "TSM",
+      "TXN",
+      "UMC",
+      "VECO",
+      "VSH",
+      "WOLF"
+    ]
+  },
+  {
+    category: "mega-tech",
+    symbols: ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NFLX", "ORCL", "CRM", "ADBE", "SHOP", "UBER", "ABNB"]
+  },
+  {
+    category: "software-ai",
+    symbols: ["PLTR", "SNOW", "DDOG", "NET", "CRWD", "PANW", "ZS", "MDB", "TEAM", "NOW", "APP", "PATH"]
+  },
+  {
+    category: "cloud-data",
+    symbols: ["NTAP", "PSTG", "STX", "WDC", "ANET", "CSCO", "DELL", "HPE", "CLS", "SANM", "OUST", "VIAV"]
+  },
+  {
+    category: "clean-energy",
+    symbols: ["CSIQ", "DQ", "ENPH", "FSLR", "JKS", "RUN", "SPWR", "SEDG", "NXT", "TSLA", "RIVN", "BE"]
+  },
+  {
+    category: "industrials",
+    symbols: ["TEL", "TRMB", "NOVT", "IPGP", "COHR", "ROK", "HON", "ETN", "AME", "KEYS", "APH", "GLW"]
+  }
+] as const satisfies readonly SecurityUniverseInput[];
+
+const CATEGORY_BY_ID = new Map(SECURITY_CATEGORIES.map((category) => [category.id, category]));
+
+function buildDefaultUniverse() {
+  const seen = new Set<string>();
+
+  return SECURITY_UNIVERSE_INPUTS.flatMap((group) => {
+    const category = CATEGORY_BY_ID.get(group.category);
+    const segment = category?.label ?? group.category;
+
+    return group.symbols
+      .filter((symbol) => {
+        if (seen.has(symbol)) {
+          return false;
+        }
+
+        seen.add(symbol);
+        return true;
+      })
+      .map((symbol) => ({
+        symbol,
+        name: symbol,
+        segment,
+        category: group.category
+      }));
+  });
+}
+
+export const DEFAULT_MARKET_UNIVERSE = buildDefaultUniverse();
+export const TARGET_SYMBOLS = DEFAULT_MARKET_UNIVERSE.map((profile) => profile.symbol);
+export const DEFAULT_SEMICONDUCTOR_UNIVERSE = DEFAULT_MARKET_UNIVERSE.filter((profile) => profile.category === "semiconductors");
 
 export type SignalAction = "BUY" | "HOLD" | "SELL";
 export type SignalRating = "STRONG_BUY" | "BUY" | "WATCH" | "SELL" | "STRONG_SELL";
@@ -133,6 +172,7 @@ export interface SymbolProfile {
   symbol: string;
   name: string;
   segment: string;
+  category?: SecurityCategoryId;
   earningsDate?: string;
 }
 
@@ -167,6 +207,7 @@ export interface RecommendationItem {
   symbol: string;
   name: string;
   segment: string;
+  category?: SecurityCategoryId;
   asOf: string;
   rating: SignalRating;
   action: SignalAction;

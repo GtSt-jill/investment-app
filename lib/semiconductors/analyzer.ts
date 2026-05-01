@@ -10,6 +10,7 @@ import {
 } from "@/lib/semiconductors/indicators";
 import {
   DEFAULT_SEMICONDUCTOR_UNIVERSE,
+  DEFAULT_MARKET_UNIVERSE,
   type IndicatorSnapshot,
   type FactorAnalysisSnapshot,
   type MarketAnalysisResult,
@@ -226,6 +227,7 @@ function buildRecommendation(
     symbol: profile.symbol,
     name: profile.name,
     segment: profile.segment,
+    category: profile.category,
     asOf: latest.date,
     rating,
     action,
@@ -245,6 +247,14 @@ function buildRecommendation(
     buyZone: buildBuyZone(indicators),
     chart: buildChart(bars, closes)
   } satisfies RecommendationItem;
+}
+
+export function analyzeMarketUniverse(
+  barsBySymbol: Record<string, PriceBar[]>,
+  universe: SymbolProfile[] = [...DEFAULT_MARKET_UNIVERSE],
+  options: AnalyzeSemiconductorsOptions = {}
+): MarketAnalysisResult {
+  return analyzeSemiconductors(barsBySymbol, universe, options);
 }
 
 function buildBaseScoreBreakdown(indicators: IndicatorSnapshot): ScoreBreakdown {

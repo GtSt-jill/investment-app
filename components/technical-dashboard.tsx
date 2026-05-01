@@ -4,8 +4,17 @@ import { useEffect, useMemo, useState, useTransition, type MouseEvent, type Poin
 
 import { formatNumber, formatPercent, formatPrice } from "@/lib/format";
 import type { PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
-import { DEFAULT_SEMICONDUCTOR_UNIVERSE, type MarketAnalysisResult, type RecommendationItem } from "@/lib/semiconductors/types";
+import {
+  DEFAULT_MARKET_UNIVERSE,
+  SECURITY_CATEGORIES,
+  type MarketAnalysisResult,
+  type RecommendationItem,
+  type SecurityCategoryId,
+  type SymbolProfile
+} from "@/lib/semiconductors/types";
 import type { TradeOrderSubmission, TradePlan, TradingRunRecord, TradingRunSummary } from "@/lib/semiconductors/trading";
+
+type CategoryFilter = "all" | SecurityCategoryId;
 
 const ratingLabels: Record<RecommendationItem["rating"], string> = {
   STRONG_BUY: "強気監視",
@@ -35,13 +44,14 @@ interface TradingRunHistoryRecord extends TradingRunResultPayload {
 
 export function TechnicalDashboard() {
   const [activeTab, setActiveTab] = useState<"signals" | "portfolio" | "trading">("signals");
-  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(() => DEFAULT_SEMICONDUCTOR_UNIVERSE.map((item) => item.symbol));
+  const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
+  const [selectedSymbols, setSelectedSymbols] = useState<string[]>(() => DEFAULT_MARKET_UNIVERSE.map((item) => item.symbol));
   const [symbolFilter, setSymbolFilter] = useState("");
   const [lookbackDays, setLookbackDays] = useState(520);
   const [isUniverseOpen, setIsUniverseOpen] = useState(false);
   const [result, setResult] = useState<MarketAnalysisResult | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
-  const [selectedSymbol, setSelectedSymbol] = useState<string>(DEFAULT_SEMICONDUCTOR_UNIVERSE[0].symbol);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(DEFAULT_MARKET_UNIVERSE[0].symbol);
   const [error, setError] = useState<string | null>(null);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [tradingResult, setTradingResult] = useState<TradingRunResultPayload | null>(null);
@@ -74,21 +84,46 @@ export function TechnicalDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, tradingRuns.length]);
 
+  const activeUniverse = useMemo(() => filterUniverseByCategory(DEFAULT_MARKET_UNIVERSE, activeCategory), [activeCategory]);
+  const activeRecommendations = useMemo(() => {
+    const rows = result?.recommendations ?? [];
+    return activeCategory === "all" ? rows : rows.filter((row) => row.category === activeCategory);
+  }, [activeCategory, result]);
+  const activeBuyCandidates = useMemo(() => activeRecommendations.filter((row) => row.action === "BUY"), [activeRecommendations]);
+  const activeSellCandidates = useMemo(() => activeRecommendations.filter((row) => row.action === "SELL"), [activeRecommendations]);
+  const activeAverageScore = useMemo(() => {
+    if (activeRecommendations.length === 0) {
+      return 0;
+    }
+
+    return activeRecommendations.reduce((total, row) => total + row.score, 0) / activeRecommendations.length;
+  }, [activeRecommendations]);
   const selectedRow = useMemo(() => {
     if (!result) {
       return null;
     }
 
-    return result.recommendations.find((row) => row.symbol === selectedSymbol) ?? result.recommendations[0] ?? null;
-  }, [result, selectedSymbol]);
+    return activeRecommendations.find((row) => row.symbol === selectedSymbol) ?? activeRecommendations[0] ?? result.recommendations[0] ?? null;
+  }, [activeRecommendations, result, selectedSymbol]);
   const filteredUniverse = useMemo(() => {
     const query = symbolFilter.trim().toUpperCase();
+    const universe = activeUniverse;
     if (!query) {
-      return DEFAULT_SEMICONDUCTOR_UNIVERSE;
+      return universe;
     }
 
-    return DEFAULT_SEMICONDUCTOR_UNIVERSE.filter((profile) => profile.symbol.includes(query) || profile.name.toUpperCase().includes(query));
-  }, [symbolFilter]);
+    return universe.filter((profile) => profile.symbol.includes(query) || profile.name.toUpperCase().includes(query));
+  }, [activeUniverse, symbolFilter]);
+
+  useEffect(() => {
+    if (activeRecommendations.length === 0) {
+      return;
+    }
+
+    setSelectedSymbol((current) =>
+      activeRecommendations.some((row) => row.symbol === current) ? current : activeRecommendations[0].symbol
+    );
+  }, [activeRecommendations]);
 
   function toggleSymbol(symbol: string) {
     setSelectedSymbols((current) => {
@@ -98,6 +133,19 @@ export function TechnicalDashboard() {
 
       return [...current, symbol];
     });
+  }
+
+  function selectCategory(category: CategoryFilter) {
+    setActiveCategory(category);
+    setSymbolFilter("");
+  }
+
+  function selectUniverse(symbols: string[]) {
+    setSelectedSymbols(Array.from(new Set(symbols)));
+  }
+
+  function selectActiveUniverse() {
+    selectUniverse(activeUniverse.map((item) => item.symbol));
   }
 
   function runAnalysis() {
@@ -187,7 +235,7 @@ export function TechnicalDashboard() {
         </div>
         <div className="workspace-tab-meta">
           {activeTab === "signals"
-            ? "半導体ウォッチリストのテクニカル分析"
+            ? "カテゴリ別ウォッチリストのテクニカル分析"
             : activeTab === "portfolio"
               ? "Alpaca Trading API の口座・保有ポジション"
               : "注文計画、paper 実行、履歴"}
@@ -203,10 +251,17 @@ export function TechnicalDashboard() {
             <h2>分析対象</h2>
           </div>
           <div className="control-status-row">
-            <span className="status-pill">{selectedSymbols.length} / {DEFAULT_SEMICONDUCTOR_UNIVERSE.length}</span>
+            <span className="status-pill">{categoryFilterLabel(activeCategory)}</span>
+            <span className="status-pill">{selectedSymbols.length} / {DEFAULT_MARKET_UNIVERSE.length}</span>
             <span className={`status-pill ${isPending ? "pending" : ""}`}>{isPending ? "取得中" : "準備完了"}</span>
           </div>
         </div>
+
+        <CategoryTabs
+          activeCategory={activeCategory}
+          selectedSymbols={selectedSymbols}
+          onSelect={selectCategory}
+        />
 
         <div className="run-row">
           <label>
@@ -232,15 +287,18 @@ export function TechnicalDashboard() {
             <div className="universe-tools">
               <input
                 type="search"
-                placeholder="ティッカー検索"
+                placeholder={`${categoryFilterLabel(activeCategory)}から検索`}
                 value={symbolFilter}
                 onChange={(event) => setSymbolFilter(event.target.value)}
               />
-              <button type="button" onClick={() => setSelectedSymbols(DEFAULT_SEMICONDUCTOR_UNIVERSE.map((item) => item.symbol))}>
-                全選択
+              <button type="button" onClick={() => selectUniverse(DEFAULT_MARKET_UNIVERSE.map((item) => item.symbol))}>
+                ALL選択
               </button>
-              <button type="button" onClick={() => setSelectedSymbols(DEFAULT_SEMICONDUCTOR_UNIVERSE.slice(0, 20).map((item) => item.symbol))}>
-                上位20件
+              <button type="button" onClick={selectActiveUniverse}>
+                表示カテゴリ選択
+              </button>
+              <button type="button" onClick={() => selectUniverse(activeUniverse.slice(0, 20).map((item) => item.symbol))}>
+                表示上位20件
               </button>
               <button type="button" onClick={() => setSelectedSymbols((current) => (current.length <= 1 ? current : [current[0]]))}>
                 クリア
@@ -276,19 +334,19 @@ export function TechnicalDashboard() {
       </section>
 
       <section className="summary-grid">
-        <SummaryCard label="買い検討" value={formatNumber(result?.buyCandidates.length ?? 0, 0)} />
-        <SummaryCard label="弱含み" value={formatNumber(result?.sellCandidates.length ?? 0, 0)} />
-        <SummaryCard label="平均スコア" value={formatNumber(result?.summary.averageScore ?? 0, 1)} />
+        <SummaryCard label="買い検討" value={formatNumber(activeBuyCandidates.length, 0)} />
+        <SummaryCard label="弱含み" value={formatNumber(activeSellCandidates.length, 0)} />
+        <SummaryCard label="平均スコア" value={formatNumber(activeAverageScore, 1)} />
         <SummaryCard label="地合い" value={marketBiasLabel(result?.summary.marketBias)} />
       </section>
 
-      {result?.recommendations.length ? (
-        <PriceBoard rows={result.recommendations.slice(0, 28)} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} totalRows={result.recommendations.length} />
+      {activeRecommendations.length ? (
+        <PriceBoard rows={activeRecommendations.slice(0, 28)} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} totalRows={activeRecommendations.length} />
       ) : null}
 
       <section className="split-grid">
-        <RecommendationList title="買い検討候補" rows={result?.buyCandidates.slice(0, 5) ?? []} emptyText="買い検討判定はまだありません。" />
-        <RecommendationList title="弱含み・回避候補" rows={result?.sellCandidates.slice(0, 5) ?? []} emptyText="明確な弱含み判定はまだありません。" />
+        <RecommendationList title="買い検討候補" rows={activeBuyCandidates.slice(0, 5)} emptyText="買い検討判定はまだありません。" />
+        <RecommendationList title="弱含み・回避候補" rows={activeSellCandidates.slice(0, 5)} emptyText="明確な弱含み判定はまだありません。" />
       </section>
 
       <section className="panel detail-panel">
@@ -366,7 +424,7 @@ export function TechnicalDashboard() {
               </tr>
             </thead>
             <tbody>
-              {(result?.recommendations ?? []).map((row) => (
+              {activeRecommendations.map((row) => (
                 <tr
                   key={row.symbol}
                   className={row.symbol === selectedRow?.symbol ? "selected-row" : ""}
@@ -425,6 +483,45 @@ export function TechnicalDashboard() {
           onRefreshHistory={loadTradingRuns}
         />
       )}
+    </div>
+  );
+}
+
+function CategoryTabs({
+  activeCategory,
+  selectedSymbols,
+  onSelect
+}: {
+  activeCategory: CategoryFilter;
+  selectedSymbols: string[];
+  onSelect: (category: CategoryFilter) => void;
+}) {
+  const selectedSet = new Set(selectedSymbols);
+  const allSelectedCount = DEFAULT_MARKET_UNIVERSE.filter((profile) => selectedSet.has(profile.symbol)).length;
+
+  return (
+    <div className="category-tabs" aria-label="Security categories">
+      <button type="button" className={activeCategory === "all" ? "active" : ""} onClick={() => onSelect("all")}>
+        <span>ALL</span>
+        <strong>{allSelectedCount}/{DEFAULT_MARKET_UNIVERSE.length}</strong>
+      </button>
+      {SECURITY_CATEGORIES.map((category) => {
+        const universe = filterUniverseByCategory(DEFAULT_MARKET_UNIVERSE, category.id);
+        const selectedCount = universe.filter((profile) => selectedSet.has(profile.symbol)).length;
+
+        return (
+          <button
+            key={category.id}
+            type="button"
+            className={activeCategory === category.id ? "active" : ""}
+            title={category.description}
+            onClick={() => onSelect(category.id)}
+          >
+            <span>{category.label}</span>
+            <strong>{selectedCount}/{universe.length}</strong>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1315,6 +1412,18 @@ function signalChangeLabel(value: RecommendationItem["signalChange"]) {
   };
 
   return labels[value];
+}
+
+function filterUniverseByCategory(universe: SymbolProfile[], category: CategoryFilter) {
+  return category === "all" ? universe : universe.filter((profile) => profile.category === category);
+}
+
+function categoryFilterLabel(category: CategoryFilter) {
+  if (category === "all") {
+    return "ALL";
+  }
+
+  return SECURITY_CATEGORIES.find((item) => item.id === category)?.label ?? category;
 }
 
 function formatNullable(value: number | null) {

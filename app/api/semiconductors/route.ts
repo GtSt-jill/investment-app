@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { analyzeSemiconductors } from "@/lib/semiconductors/analyzer";
+import { analyzeMarketUniverse } from "@/lib/semiconductors/analyzer";
 import { fetchDailyBars } from "@/lib/semiconductors/alpaca";
-import { DEFAULT_SEMICONDUCTOR_UNIVERSE } from "@/lib/semiconductors/types";
+import { DEFAULT_MARKET_UNIVERSE } from "@/lib/semiconductors/types";
 
 export async function POST(request: Request) {
   try {
@@ -12,11 +12,11 @@ export async function POST(request: Request) {
     }>;
     const symbols = coerceSymbols(payload.symbols);
     const lookbackDays = coerceLookbackDays(payload.lookbackDays);
-    const universe = DEFAULT_SEMICONDUCTOR_UNIVERSE.filter((profile) => symbols.includes(profile.symbol));
+    const universe = DEFAULT_MARKET_UNIVERSE.filter((profile) => symbols.includes(profile.symbol));
     const marketSymbols = ["SMH", "QQQ"];
     const fetchSymbols = Array.from(new Set([...symbols, ...marketSymbols]));
     const barsBySymbol = await fetchDailyBars(fetchSymbols, lookbackDays);
-    const result = analyzeSemiconductors(barsBySymbol, universe, {
+    const result = analyzeMarketUniverse(barsBySymbol, universe, {
       marketBars: {
         semiconductor: barsBySymbol.SMH,
         qqq: barsBySymbol.QQQ
@@ -35,7 +35,7 @@ export async function GET() {
 }
 
 function coerceSymbols(value: unknown) {
-  const allowed = new Set<string>(DEFAULT_SEMICONDUCTOR_UNIVERSE.map((profile) => profile.symbol));
+  const allowed = new Set<string>(DEFAULT_MARKET_UNIVERSE.map((profile) => profile.symbol));
   if (!Array.isArray(value)) {
     return Array.from(allowed);
   }
