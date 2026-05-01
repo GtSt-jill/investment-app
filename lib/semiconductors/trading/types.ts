@@ -12,9 +12,16 @@ export type TradeActionReason =
   | "STOP_LOSS_EXIT"
   | "SEVERE_SELL_EXIT"
   | "WEAK_SELL_REDUCE"
+  | "WEAK_HOLD_REDUCE"
   | "DEFENSIVE_REGIME_REDUCE"
   | "OVER_ALLOCATION_REDUCE";
-export type TradeExitReason = "STOP_LOSS" | "SEVERE_SELL_SIGNAL" | "WEAK_SELL_SIGNAL" | "DEFENSIVE_REGIME" | "OVER_ALLOCATION";
+export type TradeExitReason =
+  | "STOP_LOSS"
+  | "SEVERE_SELL_SIGNAL"
+  | "WEAK_SELL_SIGNAL"
+  | "WEAK_HOLD_SIGNAL"
+  | "DEFENSIVE_REGIME"
+  | "OVER_ALLOCATION";
 export type TradeScoreGate = "passed" | "blocked" | "not_applicable";
 export type OrderType = "market" | "limit" | "stop" | "stop_limit" | "bracket";
 export type TradePlanStatus = "planned" | "blocked" | "submitted" | "filled" | "rejected" | "cancelled";

@@ -203,13 +203,15 @@ Alpaca Trading API から次を取得します。
 
 ### `POST /api/trading/run`
 
-カテゴリ別ウォッチリストの分析、ポートフォリオ、未約定注文を取得して、注文計画を作ります。`mode` は `dry-run` または `paper` を受け付けます。`live` は現時点では API と scheduler の両方で拒否します。
+カテゴリ別ウォッチリストの分析、ポートフォリオ、未約定注文を取得して、注文計画を作ります。`mode` は `dry-run` または `paper` を受け付けます。`live` は承認条件を評価しますが、現時点では発注送信しません。
 
 `dry-run` は Alpaca に発注せず、`plans`、`orders`、`summary`、ブロック理由を返します。`paper` は `AUTO_TRADING_PAPER_ENABLED=true` が環境変数で設定されている場合だけ、`planned` の注文を Alpaca paper account に送信します。request body の `config.paperTradingEnabled` だけでは paper 発注を有効化できません。
 
+`riskProfile` で paper / dry-run の実行姿勢を切り替えられます。`active` は買い条件や価格乖離制限を緩め、弱い `HOLD` 保有も削減候補にします。`balanced` は既定値、`cautious` は買い条件、ATR、価格乖離、reward:risk を厳しくします。
+
 ### `GET /api/trading/runs`
 
-`AUTO_TRADING_RUN_LOG_PATH` または `data/trading-runs.jsonl` から、直近の自動売買 run 履歴を返します。
+`AUTO_TRADING_RUN_LOG_PATH` または `data/trading-runs.jsonl` から、直近の自動売買 run 履歴と paper run readiness を返します。
 
 ## Auto-Trading Readiness
 
@@ -223,15 +225,15 @@ Alpaca Trading API から次を取得します。
 - Alpaca Trading client は明示的な `allowLive: true` なしに live URL へ注文送信しない
 - `AUTO_TRADING_KILL_SWITCH=true` で paper 提出を skip
 - paper 実行直前に open orders を再取得して重複注文を block
+- live mode 要求時は、20日分の paper run、最新 dry-run id、環境変数の live enable flag、確認 token を検証する
 - 注文は `limit` または `bracket` で作成し、`market buy` は生成しない
 - scheduler は同時実行 lock と米国市場休場日の簡易 guard を持つ
 - run 履歴と paper 注文ログを JSONL に保存できる。ただし保存失敗は notes に残す best-effort で、live 用の監査ログ保証ではない
 
 real-money-readiness の未達 criteria:
 
-- live 発注を有効化する前に、最低 20 営業日分の paper run 履歴をレビューする
-- live 用 API key、base URL、明示的な enable flag、1 run ごとの確認 token を分離する
-- live 注文前に dry-run と同一の注文計画を人間が確認できる UI または承認フローを用意する
+- live 用 API key / base URL を paper と完全分離する
+- live 注文前に dry-run と同一の注文計画を人間が確認できる UI を用意する
 - 連続 API エラー、注文拒否、履歴保存失敗を検知して自動的に停止する運用ルールを決める
 - stop loss / take profit、partial fill、cancel / replace、短縮取引日を含む broker 実挙動を paper と手動 review で確認する
 
@@ -265,10 +267,13 @@ finalScore =
 | `ALPACA_DATA_FEED` | No | `iex` | Market Data の feed |
 | `ALPACA_DATA_BASE_URL` | No | `https://data.alpaca.markets` | Market Data API の base URL |
 | `ALPACA_TRADING_BASE_URL` | No | `https://paper-api.alpaca.markets` | Trading API の base URL |
-| `AUTO_TRADING_MODE` | No | `off` / API default `dry-run` | `off`、`dry-run`、`paper`、`live`。`live` は未対応 |
+| `AUTO_TRADING_MODE` | No | `off` / API default `dry-run` | `off`、`dry-run`、`paper`、`live`。`live` は承認条件のみ評価し、発注送信は未対応 |
 | `AUTO_TRADING_PAPER_ENABLED` | No | `false` | `paper` mode の実発注許可 |
+| `AUTO_TRADING_LIVE_ENABLED` | No | `false` | live approval gate の明示的な有効化。発注送信はまだ未対応 |
+| `AUTO_TRADING_LIVE_CONFIRMATION_TOKEN` | No | - | live approval request で照合する確認 token |
 | `AUTO_TRADING_KILL_SWITCH` | No | `false` | paper 提出を停止 |
 | `AUTO_TRADING_ALLOWED_SYMBOLS` | No | - | 自動売買対象 symbol の comma-separated allowlist |
+| `AUTO_TRADING_RISK_PROFILE` | No | `balanced` | `active`、`balanced`、`cautious` |
 | `AUTO_TRADING_MIN_ENTRY_SCORE` | No | `70` | 新規買いの最低スコア |
 | `AUTO_TRADING_ADD_MIN_SCORE` | No | `72` | 追加買いの最低スコア |
 | `AUTO_TRADING_MIN_ENTRY_REWARD_RISK_RATIO` | No | `1.5` | エントリー時の最低 reward:risk |
@@ -276,6 +281,7 @@ finalScore =
 | `AUTO_TRADING_UNSTABLE_SIGNAL_SCORE_BUFFER` | No | `3` | 新規/反転 BUY に追加要求するスコア buffer |
 | `AUTO_TRADING_MAX_ENTRY_SMA20_PREMIUM_PCT` | No | `0.08` | 20日線からの最大上方乖離 |
 | `AUTO_TRADING_MAX_ENTRY_DAY_CHANGE_PCT` | No | `0.04` | エントリー許容する当日上昇率上限 |
+| `AUTO_TRADING_WEAK_HOLD_REDUCE_SCORE_THRESHOLD` | No | - | 設定時、保有中の弱い `HOLD` を削減候補にするスコア閾値 |
 | `AUTO_TRADING_RUN_LOG_PATH` | No | `data/trading-runs.jsonl` | run 履歴 JSONL |
 | `AUTO_TRADING_LOG_PATH` | No | - | paper 注文ログ JSONL |
 | `AUTO_TRADING_API_URL` | No | `http://localhost:3000/api/trading/run` | scheduler が呼ぶ API URL |

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { appendTradingRunHistory, readTradingRunHistory } from "@/lib/semiconductors/trading/history";
-import type { TradingDryRunResult } from "@/lib/semiconductors/trading";
+import { evaluateLiveTradingReadiness, evaluatePaperTradingReadiness } from "@/lib/semiconductors/trading/readiness";
+import type { TradeOrderSubmission, TradingDryRunResult, TradingPaperRunResult } from "@/lib/semiconductors/trading";
 
 describe("trading run history", () => {
   it("appends and reads recent records newest first", async () => {
@@ -25,6 +26,69 @@ describe("trading run history", () => {
 
     expect(records.map((record) => record.run.id)).toEqual(["valid"]);
   });
+
+  it("requires 20 completed paper trading days with submitted orders before paper readiness passes", async () => {
+    const records = Array.from({ length: 19 }, (_, index) =>
+      historyLine(`paper-${index}`, {
+        mode: "paper",
+        asOf: dateAt(index),
+        submissions: [submission(`plan-${index}`, "submitted")]
+      })
+    );
+
+    expect(evaluatePaperTradingReadiness(records).ready).toBe(false);
+    expect(evaluatePaperTradingReadiness(records).blockers).toContain("Need 20 completed paper trading days; found 19.");
+
+    const readyRecords = [
+      ...records,
+      historyLine("paper-20", {
+        mode: "paper",
+        asOf: dateAt(19),
+        submissions: [submission("plan-20", "submitted")]
+      })
+    ];
+    const readiness = evaluatePaperTradingReadiness(readyRecords);
+
+    expect(readiness).toMatchObject({
+      ready: true,
+      completedPaperDays: 20,
+      completedPaperRuns: 20,
+      failedPaperRuns: 0,
+      failedSubmissions: 0,
+      submittedOrders: 20
+    });
+  });
+
+  it("blocks live readiness until paper review and explicit approval both pass", async () => {
+    const records = [
+      historyLine("dry-latest", { mode: "dry-run", asOf: "2026-04-30" }),
+      ...Array.from({ length: 20 }, (_, index) =>
+        historyLine(`paper-${index}`, {
+          mode: "paper",
+          asOf: dateAt(index),
+          submissions: [submission(`plan-${index}`, "submitted")]
+        })
+      )
+    ];
+
+    expect(
+      evaluateLiveTradingReadiness(records, {
+        liveEnabled: true,
+        expectedConfirmationToken: "confirm-live",
+        confirmationToken: "confirm-live",
+        approvedDryRunId: "dry-latest"
+      })
+    ).toMatchObject({ ready: true });
+
+    expect(
+      evaluateLiveTradingReadiness(records, {
+        liveEnabled: true,
+        expectedConfirmationToken: "confirm-live",
+        confirmationToken: "wrong",
+        approvedDryRunId: "dry-latest"
+      }).approval.blockers
+    ).toContain("Live confirmation token did not match.");
+  });
 });
 
 async function tempHistoryPath() {
@@ -32,25 +96,44 @@ async function tempHistoryPath() {
   return join(dir, "runs.jsonl");
 }
 
-function historyLine(id: string) {
-  const payload = result(id, "2026-04-24T20:00:00.000Z");
+function historyLine(
+  id: string,
+  options: {
+    mode?: "dry-run" | "paper";
+    asOf?: string;
+    status?: "completed" | "failed";
+    submissions?: TradeOrderSubmission[];
+  } = {}
+) {
+  const payload = result(id, "2026-04-24T20:00:00.000Z", options);
   return {
     savedAt: payload.run.generatedAt,
     run: payload.run,
     summary: payload.summary,
     plans: payload.plans,
+    submissions: "submissions" in payload ? payload.submissions : undefined,
     notes: payload.notes
   };
 }
 
-function result(id: string, generatedAt: string): TradingDryRunResult {
-  return {
+function result(
+  id: string,
+  generatedAt: string,
+  options: {
+    mode?: "dry-run" | "paper";
+    asOf?: string;
+    status?: "completed" | "failed";
+    submissions?: TradeOrderSubmission[];
+  } = {}
+): TradingDryRunResult | TradingPaperRunResult {
+  const mode = options.mode ?? "dry-run";
+  const base: TradingDryRunResult = {
     run: {
       id,
-      mode: "dry-run",
-      asOf: "2026-04-24",
+      mode,
+      asOf: options.asOf ?? "2026-04-24",
       generatedAt,
-      status: "completed",
+      status: options.status ?? "completed",
       marketRegime: "bullish",
       portfolioValue: 100_000,
       notes: []
@@ -62,6 +145,7 @@ function result(id: string, generatedAt: string): TradingDryRunResult {
       paperTradingEnabled: false,
       liveTradingEnabled: false,
       useBracketOrders: true,
+      riskProfile: "balanced",
       risk: {
         riskPerTradePct: 0.005,
         maxPositionPct: 0.08,
@@ -118,4 +202,31 @@ function result(id: string, generatedAt: string): TradingDryRunResult {
     },
     notes: []
   };
+
+  if (mode !== "paper") {
+    return base;
+  }
+
+  return {
+    ...base,
+    submissions: options.submissions ?? [],
+    orderLogs: []
+  };
+}
+
+function submission(planId: string, status: TradeOrderSubmission["status"]): TradeOrderSubmission {
+  return {
+    planId,
+    clientOrderId: planId,
+    symbol: "NVDA",
+    side: "buy",
+    status,
+    alpacaOrderId: status === "submitted" ? `alpaca-${planId}` : undefined,
+    alpacaStatus: status === "submitted" ? "accepted" : undefined,
+    error: status === "failed" ? "paper submit failed" : undefined
+  };
+}
+
+function dateAt(index: number) {
+  return new Date(Date.UTC(2026, 3, 1 + index)).toISOString().slice(0, 10);
 }

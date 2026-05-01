@@ -364,6 +364,20 @@ function shouldReducePosition(
     };
   }
 
+  if (
+    recommendation.action === "HOLD" &&
+    config.risk.weakHoldReduceScoreThreshold !== null &&
+    config.risk.weakHoldReduceScoreThreshold !== undefined &&
+    recommendation.score < config.risk.weakHoldReduceScoreThreshold
+  ) {
+    return {
+      intent: "REDUCE_LONG",
+      actionReason: "WEAK_HOLD_REDUCE",
+      exitReason: "WEAK_HOLD_SIGNAL",
+      message: `Position should be reduced because HOLD score is below ${config.risk.weakHoldReduceScoreThreshold}.`
+    };
+  }
+
   if ((recommendation.marketRegime ?? analysis.summary.marketRegime) === "defensive" && recommendation.score < config.risk.minEntryScore) {
     return {
       intent: "REDUCE_LONG",
@@ -431,7 +445,12 @@ interface PositionExitDecision {
   intent: Extract<TradeIntent, "REDUCE_LONG" | "CLOSE_LONG">;
   actionReason: Extract<
     TradeActionReason,
-    "STOP_LOSS_EXIT" | "SEVERE_SELL_EXIT" | "WEAK_SELL_REDUCE" | "DEFENSIVE_REGIME_REDUCE" | "OVER_ALLOCATION_REDUCE"
+    | "STOP_LOSS_EXIT"
+    | "SEVERE_SELL_EXIT"
+    | "WEAK_SELL_REDUCE"
+    | "WEAK_HOLD_REDUCE"
+    | "DEFENSIVE_REGIME_REDUCE"
+    | "OVER_ALLOCATION_REDUCE"
   >;
   exitReason: TradeExitReason;
   message: string;

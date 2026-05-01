@@ -197,6 +197,76 @@ describe("trading intent refinement semantics", () => {
     expect(blockCodes(candidateFor(candidates, "CHURN"))).toContain("SIGNAL_STABILITY_ADJUSTMENT_TOO_LOW");
   });
 
+  it("uses active risk profile to allow lower-score BUY entries than the balanced profile", () => {
+    expect(normalizeTradingConfig({ riskProfile: "active" }).risk.minEntryScore).toBeLessThan(
+      normalizeTradingConfig({ riskProfile: "balanced" }).risk.minEntryScore
+    );
+
+    const recommendations = [
+      recommendation({
+        symbol: "ACTIVE",
+        action: "BUY",
+        rating: "BUY",
+        score: 66,
+        close: 100,
+        stopLoss: 95,
+        signalChange: "BUY_CONTINUATION"
+      })
+    ];
+
+    expect(blockCodes(candidateFor(intents({ recommendations, portfolio: portfolio({ positions: [] }) }), "ACTIVE"))).toContain(
+      "SCORE_BELOW_THRESHOLD"
+    );
+    expect(
+      blockCodes(
+        candidateFor(
+          intents({
+            recommendations,
+            portfolio: portfolio({ positions: [] }),
+            config: { riskProfile: "active", risk: { minEntryScore: 65, addMinScore: 67, unstableSignalScoreBuffer: 0 } }
+          }),
+          "ACTIVE"
+        )
+      )
+    ).not.toContain("SCORE_BELOW_THRESHOLD");
+  });
+
+  it("lets active risk profile reduce weak HOLD positions while balanced profile holds them", () => {
+    const recommendations = [
+      recommendation({
+        symbol: "WEAKHOLD",
+        action: "HOLD",
+        rating: "WATCH",
+        score: 52,
+        close: 100,
+        stopLoss: 92,
+        signalChange: "NO_CHANGE"
+      })
+    ];
+    const currentPortfolio = portfolio({
+      positions: [position({ symbol: "WEAKHOLD", quantity: 100, currentPrice: 100, allocationPct: 0.05 })]
+    });
+
+    expect(candidateFor(intents({ recommendations, portfolio: currentPortfolio }), "WEAKHOLD")).toMatchObject({
+      intent: "NO_ACTION",
+      actionReason: "HOLD_SIGNAL"
+    });
+    expect(
+      candidateFor(
+        intents({
+          recommendations,
+          portfolio: currentPortfolio,
+          config: { riskProfile: "active", risk: { weakHoldReduceScoreThreshold: 55 } }
+        }),
+        "WEAKHOLD"
+      )
+    ).toMatchObject({
+      intent: "REDUCE_LONG",
+      actionReason: "WEAK_HOLD_REDUCE",
+      exitReason: "WEAK_HOLD_SIGNAL"
+    });
+  });
+
   it("documents reduce versus exit sizing through the dry-run public API", () => {
     const result = createTradingDryRun({
       mode: "dry-run",

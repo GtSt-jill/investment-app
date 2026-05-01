@@ -10,17 +10,29 @@ export {
 export {
   DEFAULT_RISK_CONFIG,
   DEFAULT_TRADING_CONFIG,
+  TRADING_RISK_PROFILE_OVERRIDES,
   isSymbolEnabled,
   normalizeTradingConfig,
   type RiskConfig,
   type TradingConfig,
   type TradingConfigInput,
-  type TradingMode
+  type TradingMode,
+  type TradingRiskProfile
 } from "./config";
 export { generateTradeIntents } from "./intent";
 export { buildAlpacaOrderRequest, buildTradePlan } from "./orders";
 export { createTradingRun, type CreateTradingRunInput } from "./paper";
 export { runTradingPaper, type RunTradingPaperOptions } from "./paper";
+export {
+  evaluateLiveApproval,
+  evaluateLiveTradingReadiness,
+  evaluatePaperTradingReadiness,
+  latestDryRunId,
+  type LiveApprovalInput,
+  type LiveApprovalReadiness,
+  type LiveTradingReadiness,
+  type PaperTradingReadiness
+} from "./readiness";
 export { evaluateTradeRisk, type RiskEvaluationContext } from "./risk";
 export { createTradingDryRun, runTradingDryRun, type CreateTradingDryRunInput, type RunTradingDryRunOptions } from "./runner";
 export { calculateOrderSizing } from "./sizing";

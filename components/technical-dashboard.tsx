@@ -12,7 +12,14 @@ import {
   type SecurityCategoryId,
   type SymbolProfile
 } from "@/lib/semiconductors/types";
-import type { TradeOrderSubmission, TradePlan, TradingRunRecord, TradingRunSummary } from "@/lib/semiconductors/trading";
+import type {
+  PaperTradingReadiness,
+  TradeOrderSubmission,
+  TradePlan,
+  TradingRiskProfile,
+  TradingRunRecord,
+  TradingRunSummary
+} from "@/lib/semiconductors/trading";
 
 type CategoryFilter = "all" | SecurityCategoryId;
 
@@ -30,8 +37,17 @@ const actionLabels: Record<RecommendationItem["action"], string> = {
   SELL: "新規買い回避"
 };
 
+const tradingRiskProfileLabels: Record<TradingRiskProfile, string> = {
+  active: "積極",
+  balanced: "標準",
+  cautious: "慎重"
+};
+
 interface TradingRunResultPayload {
   run: TradingRunRecord;
+  config?: {
+    riskProfile: TradingRiskProfile;
+  };
   summary: TradingRunSummary;
   plans: TradePlan[];
   submissions?: TradeOrderSubmission[];
@@ -40,6 +56,10 @@ interface TradingRunResultPayload {
 
 interface TradingRunHistoryRecord extends TradingRunResultPayload {
   savedAt: string;
+}
+
+interface TradingReadinessPayload {
+  paper: PaperTradingReadiness;
 }
 
 export function TechnicalDashboard() {
@@ -56,6 +76,8 @@ export function TechnicalDashboard() {
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [tradingResult, setTradingResult] = useState<TradingRunResultPayload | null>(null);
   const [tradingRuns, setTradingRuns] = useState<TradingRunHistoryRecord[]>([]);
+  const [tradingReadiness, setTradingReadiness] = useState<TradingReadinessPayload | null>(null);
+  const [tradingRiskProfile, setTradingRiskProfile] = useState<TradingRiskProfile>("balanced");
   const [tradingError, setTradingError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isPortfolioPending, startPortfolioTransition] = useTransition();
@@ -186,18 +208,22 @@ export function TechnicalDashboard() {
   function loadTradingRuns() {
     startTradingHistoryTransition(async () => {
       const response = await fetch("/api/trading/runs?limit=12");
-      const payload = (await response.json()) as { runs?: TradingRunHistoryRecord[]; error?: string };
+      const payload = (await response.json()) as { runs?: TradingRunHistoryRecord[]; readiness?: TradingReadinessPayload; error?: string };
       if (!response.ok) {
         setTradingError(payload.error ?? "自動売買履歴の取得に失敗しました。");
         return;
       }
 
       setTradingRuns(payload.runs ?? []);
+      setTradingReadiness(payload.readiness ?? null);
     });
   }
 
   function runTrading(mode: "dry-run" | "paper") {
-    if (mode === "paper" && !window.confirm("Alpaca paper account に planned 注文を送信します。実行しますか？")) {
+    if (
+      mode === "paper" &&
+      !window.confirm(`${tradingRiskProfileLabels[tradingRiskProfile]}モードで Alpaca paper account に planned 注文を送信します。実行しますか？`)
+    ) {
       return;
     }
 
@@ -206,7 +232,7 @@ export function TechnicalDashboard() {
       const response = await fetch("/api/trading/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, symbols: selectedSymbols, lookbackDays })
+        body: JSON.stringify({ mode, symbols: selectedSymbols, lookbackDays, riskProfile: tradingRiskProfile })
       });
       const payload = (await response.json()) as TradingRunResultPayload | { error?: string };
       if (!response.ok) {
@@ -476,10 +502,13 @@ export function TechnicalDashboard() {
         <TradingDashboard
           result={tradingResult}
           runs={tradingRuns}
+          readiness={tradingReadiness}
+          riskProfile={tradingRiskProfile}
           error={tradingError}
           isPending={isTradingPending}
           isHistoryPending={isTradingHistoryPending}
           onRun={runTrading}
+          onRiskProfileChange={setTradingRiskProfile}
           onRefreshHistory={loadTradingRuns}
         />
       )}
@@ -583,24 +612,31 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
 function TradingDashboard({
   result,
   runs,
+  readiness,
+  riskProfile,
   error,
   isPending,
   isHistoryPending,
   onRun,
+  onRiskProfileChange,
   onRefreshHistory
 }: {
   result: TradingRunResultPayload | null;
   runs: TradingRunHistoryRecord[];
+  readiness: TradingReadinessPayload | null;
+  riskProfile: TradingRiskProfile;
   error: string | null;
   isPending: boolean;
   isHistoryPending: boolean;
   onRun: (mode: "dry-run" | "paper") => void;
+  onRiskProfileChange: (profile: TradingRiskProfile) => void;
   onRefreshHistory: () => void;
 }) {
   const plans = result?.plans ?? [];
   const planned = plans.filter((plan) => plan.status === "planned");
   const blocked = plans.filter((plan) => plan.status === "blocked");
   const submissions = result?.submissions ?? [];
+  const paperReadiness = readiness?.paper ?? null;
 
   return (
     <>
@@ -610,7 +646,7 @@ function TradingDashboard({
             <p className="panel-eyebrow">Auto Trading</p>
             <h2>自動売買実行</h2>
             <p className="muted-copy">
-              dry-run は注文計画のみ作成します。paper 実行は planned 注文だけ Alpaca paper account に送信します。
+              dry-run は注文計画のみ作成します。paper 実行は selected profile の planned 注文だけ Alpaca paper account に送信します。
             </p>
           </div>
           <div className="run-actions">
@@ -625,10 +661,34 @@ function TradingDashboard({
             </button>
           </div>
         </div>
+        <div className="workspace-tabs compact-tabs" aria-label="Paper execution profile">
+          {(["active", "balanced", "cautious"] as const).map((profile) => (
+            <button
+              key={profile}
+              type="button"
+              className={riskProfile === profile ? "active" : ""}
+              onClick={() => onRiskProfileChange(profile)}
+              disabled={isPending}
+            >
+              {tradingRiskProfileLabels[profile]}
+            </button>
+          ))}
+        </div>
+        <p className="muted-copy">
+          {riskProfile === "active"
+            ? "積極: BUY 条件と価格乖離制限を緩め、弱い HOLD の保有削減も許可します。"
+            : riskProfile === "cautious"
+              ? "慎重: BUY 条件、ATR、価格乖離、reward:risk を厳しくします。"
+              : "標準: 現在の既定リスク設定で実行します。"}
+        </p>
         {error ? <p className="error-message">{error}</p> : null}
         {result ? (
           <div className="trading-run-strip">
             <StatusChip label={result.run.mode} tone={result.run.mode === "paper" ? "warn" : "neutral"} />
+            <StatusChip
+              label={tradingRiskProfileLabels[result.config?.riskProfile ?? "balanced"]}
+              tone={(result.config?.riskProfile ?? "balanced") === "active" ? "warn" : (result.config?.riskProfile ?? "balanced") === "cautious" ? "neutral" : "ok"}
+            />
             <StatusChip label={result.run.status} tone={result.run.status === "completed" ? "ok" : "danger"} />
             <span>{result.run.asOf}</span>
             <span>{new Date(result.run.generatedAt).toLocaleString("ja-JP")}</span>
@@ -641,6 +701,35 @@ function TradingDashboard({
         <SummaryCard label="planned" value={formatNumber(result?.summary.plannedCount ?? 0, 0)} />
         <SummaryCard label="blocked" value={formatNumber(result?.summary.blockedCount ?? 0, 0)} />
         <SummaryCard label="発注結果" value={formatNumber(submissions.filter((item) => item.status === "submitted").length, 0)} />
+      </section>
+
+      <section className="panel table-panel">
+        <div className="panel-header">
+          <div>
+            <p className="panel-eyebrow">Live Readiness</p>
+            <h2>実資金前レビュー</h2>
+          </div>
+          <StatusChip label={paperReadiness?.ready ? "paper ready" : "paper review required"} tone={paperReadiness?.ready ? "ok" : "warn"} />
+        </div>
+        {paperReadiness ? (
+          <div className="metric-grid portfolio-metric-grid">
+            <Metric label="Paper日数" value={`${paperReadiness.completedPaperDays} / ${paperReadiness.requiredPaperDays}`} />
+            <Metric label="Paper Runs" value={formatNumber(paperReadiness.completedPaperRuns, 0)} />
+            <Metric label="Submitted" value={formatNumber(paperReadiness.submittedOrders, 0)} />
+            <Metric label="失敗Run" value={formatNumber(paperReadiness.failedPaperRuns, 0)} />
+            <Metric label="失敗注文" value={formatNumber(paperReadiness.failedSubmissions, 0)} />
+            <Metric label="期間" value={paperReadiness.firstPaperAsOf && paperReadiness.latestPaperAsOf ? `${paperReadiness.firstPaperAsOf} - ${paperReadiness.latestPaperAsOf}` : "-"} />
+          </div>
+        ) : (
+          <p className="muted-copy">履歴更新後に paper run レビュー状況を表示します。</p>
+        )}
+        {paperReadiness && paperReadiness.blockers.length > 0 ? (
+          <ul className="notes-list">
+            {paperReadiness.blockers.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       <section className="split-grid trading-split-grid">

@@ -1,4 +1,5 @@
 export type TradingMode = "off" | "dry-run" | "paper" | "live";
+export type TradingRiskProfile = "active" | "balanced" | "cautious";
 
 export interface RiskConfig {
   riskPerTradePct: number;
@@ -17,6 +18,7 @@ export interface RiskConfig {
   addMinScore: number;
   sellScoreThreshold: number;
   severeSellExitScoreThreshold?: number | null;
+  weakHoldReduceScoreThreshold?: number | null;
   topRelativeStrengthPct: number;
   maxEntryPricePremiumPct: number;
   maxEntrySma20PremiumPct: number;
@@ -38,6 +40,7 @@ export interface TradingConfig {
   paperTradingEnabled: boolean;
   liveTradingEnabled: boolean;
   useBracketOrders: boolean;
+  riskProfile: TradingRiskProfile;
   risk: RiskConfig;
 }
 
@@ -62,6 +65,7 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   addMinScore: 72,
   sellScoreThreshold: 45,
   severeSellExitScoreThreshold: 15,
+  weakHoldReduceScoreThreshold: null,
   topRelativeStrengthPct: 0.35,
   maxEntryPricePremiumPct: 0.03,
   maxEntrySma20PremiumPct: 0.08,
@@ -83,16 +87,63 @@ export const DEFAULT_TRADING_CONFIG: TradingConfig = {
   paperTradingEnabled: false,
   liveTradingEnabled: false,
   useBracketOrders: true,
+  riskProfile: "balanced",
   risk: DEFAULT_RISK_CONFIG
 };
 
+export const TRADING_RISK_PROFILE_OVERRIDES = {
+  active: {
+    riskPerTradePct: 0.0075,
+    maxPositionPct: 0.1,
+    maxDailyNewEntries: 5,
+    maxDailyNotionalPct: 0.25,
+    maxAtrPct: 0.1,
+    minEntryScore: 65,
+    addMinScore: 67,
+    sellScoreThreshold: 50,
+    severeSellExitScoreThreshold: 25,
+    weakHoldReduceScoreThreshold: 55,
+    topRelativeStrengthPct: 0.6,
+    maxEntryPricePremiumPct: 0.06,
+    maxEntrySma20PremiumPct: 0.12,
+    maxEntryDayChangePct: 0.07,
+    minEntryRewardRiskRatio: 1.1,
+    neutralEntryScoreBuffer: 1,
+    unstableSignalScoreBuffer: 0
+  },
+  balanced: {},
+  cautious: {
+    riskPerTradePct: 0.0035,
+    maxPositionPct: 0.06,
+    maxDailyNewEntries: 1,
+    maxDailyNotionalPct: 0.08,
+    maxAtrPct: 0.06,
+    minEntryScore: 76,
+    addMinScore: 78,
+    sellScoreThreshold: 45,
+    severeSellExitScoreThreshold: 15,
+    weakHoldReduceScoreThreshold: null,
+    topRelativeStrengthPct: 0.25,
+    maxEntryPricePremiumPct: 0.015,
+    maxEntrySma20PremiumPct: 0.05,
+    maxEntryDayChangePct: 0.025,
+    minEntryRewardRiskRatio: 2,
+    neutralEntryScoreBuffer: 8,
+    unstableSignalScoreBuffer: 5
+  }
+} satisfies Record<TradingRiskProfile, Partial<RiskConfig>>;
+
 export function normalizeTradingConfig(input: TradingConfigInput = {}): TradingConfig {
+  const riskProfile = normalizeRiskProfile(input.riskProfile);
+
   return {
     ...DEFAULT_TRADING_CONFIG,
     ...input,
+    riskProfile,
     enabledSymbols: input.enabledSymbols === undefined ? DEFAULT_TRADING_CONFIG.enabledSymbols : normalizeSymbols(input.enabledSymbols),
     risk: {
       ...DEFAULT_RISK_CONFIG,
+      ...TRADING_RISK_PROFILE_OVERRIDES[riskProfile],
       ...input.risk
     }
   };
@@ -109,4 +160,8 @@ function normalizeSymbols(symbols: string[] | null) {
 
   const normalized = symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
   return Array.from(new Set(normalized)).sort();
+}
+
+function normalizeRiskProfile(value: TradingRiskProfile | undefined) {
+  return value === "active" || value === "balanced" || value === "cautious" ? value : DEFAULT_TRADING_CONFIG.riskProfile;
 }

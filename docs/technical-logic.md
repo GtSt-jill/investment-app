@@ -318,6 +318,18 @@ calculateSignalChange(previousAction, currentAction)
 
 `paper` では、発注直前に Alpaca から open orders を再取得し、同一銘柄の active order があれば `DUPLICATE_OPEN_ORDER` で block します。request body の `config.paperTradingEnabled` だけでは paper 発注を有効化できず、環境変数 `AUTO_TRADING_PAPER_ENABLED=true` が必要です。`AUTO_TRADING_KILL_SWITCH=true` の場合は、注文候補があっても paper 提出を skip します。
 
+### 実行姿勢プロファイル
+
+`riskProfile` で dry-run / paper の実行姿勢を切り替えます。
+
+| riskProfile | UI表示 | 主な用途 |
+| --- | --- | --- |
+| `active` | 積極 | BUY 条件、相対強度 cutoff、ATR、価格乖離、reward:risk を緩め、保有中の弱い `HOLD` も削減候補にする |
+| `balanced` | 標準 | 既定のリスク設定 |
+| `cautious` | 慎重 | BUY 条件、ATR、価格乖離、reward:risk を厳しくする |
+
+プロファイルは `TradingConfig.riskProfile` として保持され、`AUTO_TRADING_RISK_PROFILE` または `/api/trading/run` の request body で指定できます。request body の `config.risk` に個別値を渡した場合は、プロファイル値の上から明示指定が優先されます。
+
 注文形式:
 
 - 新規買いと追加買いは、既定で `bracket` order を作る
@@ -372,15 +384,17 @@ calculateSignalChange(previousAction, currentAction)
 - paper mode は送信前に open orders を再取得し、重複注文を block する
 - paper mode は初回送信エラーで後続注文を止め、失敗を `submissions` と order log に残す
 - request body の設定だけでは paper 発注を有効化できない
-- `live` mode は API route と scheduled runner で拒否される
+- `GET /api/trading/runs` は paper run 履歴から、20営業日相当の完了済み paper run、失敗 run、失敗 submission、submitted 注文件数を集計して readiness を返す
+- `live` mode は API route で paper readiness、`AUTO_TRADING_LIVE_ENABLED=true`、`AUTO_TRADING_LIVE_CONFIRMATION_TOKEN`、最新完了 dry-run id と一致する `approvedDryRunId` を検証する
+- live approval gate が通っても、現時点では live 発注送信は無効のまま
 - scheduled runner は `off` では API を呼ばず、同時実行 lock を使い、米国市場休場日の簡易 guard を持つ
 - run 履歴は JSONL に保存され、壊れた行は読み飛ばせる
 
 まだ不足している acceptance criteria:
 
-- live 用 API key / base URL / enable flag / per-run confirmation token が paper と分離されている
-- live 発注前に dry-run と同一の注文計画を人間が確認できる
-- live 有効化前に、最低 20 営業日分の paper run 履歴、block 理由、約定品質、注文拒否をレビューしている
+- live 用 API key / base URL が paper と分離されている
+- live 発注前に dry-run と同一の注文計画を人間が確認できる UI がある
+- live 有効化前に、最低 20 営業日分の paper run 履歴、block 理由、約定品質、注文拒否を人間がレビューしている
 - partial fill、cancel / replace、broker 側 rejection、rate limit、network timeout の扱いがテストされている
 - 連続 API エラー、注文ログ保存失敗、run 履歴保存失敗を運用上の停止条件にできる
 - 短縮取引日、臨時休場、取引時間外送信を区別できる market calendar guard がある

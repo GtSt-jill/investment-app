@@ -1,10 +1,14 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/trading/run/route";
 import * as trading from "@/lib/semiconductors/trading";
+import { appendTradingRunHistory } from "@/lib/semiconductors/trading/history";
 import type { PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
 import type { MarketAnalysisResult, RecommendationItem, SignalAction, SignalRating } from "@/lib/semiconductors/types";
-import type { AlpacaOrderRequest, OpenOrderSnapshot, TradingConfigInput, TradingDryRunResult } from "@/lib/semiconductors/trading";
+import type { AlpacaOrderRequest, OpenOrderSnapshot, TradingConfigInput, TradingDryRunResult, TradingPaperRunResult } from "@/lib/semiconductors/trading";
 
 type TradingRunMode = "dry-run" | "paper";
 
@@ -144,7 +148,7 @@ describe("trading run route mode guards", () => {
     }
   });
 
-  it("rejects live mode before any trading API work is attempted", async () => {
+  it("returns live readiness blockers before any trading API work is attempted", async () => {
     const response = await POST(
       new Request("http://localhost/api/trading/run", {
         method: "POST",
@@ -153,7 +157,59 @@ describe("trading run route mode guards", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: expect.any(String) });
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Live trading approval requirements are not met.",
+      readiness: {
+        ready: false,
+        paper: expect.objectContaining({ ready: false }),
+        approval: expect.objectContaining({ ready: false })
+      }
+    });
+  });
+
+  it("requires paper review and explicit token approval before live can pass gates", async () => {
+    const previousPath = process.env.AUTO_TRADING_RUN_LOG_PATH;
+    const previousLiveEnabled = process.env.AUTO_TRADING_LIVE_ENABLED;
+    const previousToken = process.env.AUTO_TRADING_LIVE_CONFIRMATION_TOKEN;
+    const filePath = await tempHistoryPath();
+
+    process.env.AUTO_TRADING_RUN_LOG_PATH = filePath;
+    process.env.AUTO_TRADING_LIVE_ENABLED = "true";
+    process.env.AUTO_TRADING_LIVE_CONFIRMATION_TOKEN = "confirm-live";
+
+    try {
+      await appendTradingRunHistory(tradingRunResult("dry-latest", "dry-run", "2026-04-30"), filePath);
+      for (let index = 0; index < 20; index += 1) {
+        await appendTradingRunHistory(tradingRunResult(`paper-${index}`, "paper", dateAt(index)), filePath);
+      }
+
+      const response = await POST(
+        new Request("http://localhost/api/trading/run", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "live",
+            liveApproval: {
+              approvedDryRunId: "dry-latest",
+              confirmationToken: "confirm-live"
+            }
+          })
+        })
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "Live approval gates passed, but live order submission is still disabled in this build.",
+        readiness: {
+          ready: true,
+          paper: expect.objectContaining({ ready: true, completedPaperDays: 20 }),
+          approval: expect.objectContaining({ ready: true })
+        }
+      });
+    } finally {
+      restoreEnv("AUTO_TRADING_RUN_LOG_PATH", previousPath);
+      restoreEnv("AUTO_TRADING_LIVE_ENABLED", previousLiveEnabled);
+      restoreEnv("AUTO_TRADING_LIVE_CONFIRMATION_TOKEN", previousToken);
+    }
   });
 });
 
@@ -172,6 +228,114 @@ function paperOrderResponse(order: AlpacaOrderRequest) {
     client_order_id: order.client_order_id,
     symbol: order.symbol,
     status: "accepted"
+  };
+}
+
+async function tempHistoryPath() {
+  const dir = await mkdtemp(join(tmpdir(), "trading-live-readiness-"));
+  return join(dir, "runs.jsonl");
+}
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}
+
+function dateAt(index: number) {
+  return new Date(Date.UTC(2026, 3, 1 + index)).toISOString().slice(0, 10);
+}
+
+function tradingRunResult(id: string, mode: "dry-run" | "paper", asOf: string): TradingDryRunResult | TradingPaperRunResult {
+  const base: TradingDryRunResult = {
+    run: {
+      id,
+      mode,
+      asOf,
+      generatedAt: `${asOf}T21:00:00.000Z`,
+      status: "completed",
+      marketRegime: "bullish",
+      portfolioValue: 100_000,
+      notes: []
+    },
+    config: {
+      mode,
+      enabledSymbols: null,
+      killSwitch: false,
+      paperTradingEnabled: mode === "paper",
+      liveTradingEnabled: false,
+      useBracketOrders: true,
+      riskProfile: "balanced",
+      risk: {
+        ...trading.DEFAULT_RISK_CONFIG,
+        ...riskConfig(),
+        maxPositions: 20,
+        minCashPct: 0.05,
+        minPrice: 5,
+        minVolume20: 300_000,
+        earningsBlackoutDays: 7,
+        addMinScore: 72,
+        sellScoreThreshold: 45,
+        severeSellExitScoreThreshold: 15,
+        maxEntrySma20PremiumPct: 0.08,
+        maxEntryDayChangePct: 0.04,
+        minEntryRewardRiskRatio: 1.5,
+        neutralEntryScoreBuffer: 5,
+        unstableSignalScoreBuffer: 3,
+        minEntryScoreChange: 0,
+        minSignalStabilityAdjustment: 0,
+        reducePositionPct: 0.5,
+        allowAddToLosingPositions: false,
+        allowPatternDayTraderBuys: false
+      }
+    },
+    portfolio: {
+      generatedAt: `${asOf}T21:00:00.000Z`,
+      summary: {
+        positionCount: 0,
+        openOrderCount: 0,
+        longExposure: 0,
+        shortExposure: 0,
+        cashAllocationPct: 1,
+        largestPositionSymbol: null,
+        largestPositionAllocationPct: null,
+        totalUnrealizedPnl: 0,
+        totalUnrealizedPnlPct: null
+      }
+    },
+    plans: [],
+    orders: [],
+    summary: {
+      planCount: 1,
+      plannedCount: mode === "paper" ? 1 : 0,
+      blockedCount: 0,
+      buyNotional: mode === "paper" ? 1000 : 0,
+      sellNotional: 0,
+      newEntryCount: mode === "paper" ? 1 : 0
+    },
+    notes: []
+  };
+
+  if (mode === "dry-run") {
+    return base;
+  }
+
+  return {
+    ...base,
+    submissions: [
+      {
+        planId: `plan-${id}`,
+        clientOrderId: `plan-${id}`,
+        symbol: "NVDA",
+        side: "buy",
+        status: "submitted",
+        alpacaOrderId: `alpaca-${id}`,
+        alpacaStatus: "accepted"
+      }
+    ],
+    orderLogs: []
   };
 }
 

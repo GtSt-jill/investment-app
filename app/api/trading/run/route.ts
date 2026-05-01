@@ -11,9 +11,11 @@ import {
   submitAlpacaOrder,
   type OpenOrderSnapshot,
   type TradeSide,
-  type TradingConfigInput
+  type TradingConfigInput,
+  type TradingRiskProfile
 } from "@/lib/semiconductors/trading";
-import { appendTradingRunHistory } from "@/lib/semiconductors/trading/history";
+import { appendTradingRunHistory, readTradingRunHistory } from "@/lib/semiconductors/trading/history";
+import { evaluateLiveTradingReadiness, latestDryRunId } from "@/lib/semiconductors/trading/readiness";
 
 export async function POST(request: Request) {
   try {
@@ -22,18 +24,40 @@ export async function POST(request: Request) {
       symbols: unknown;
       lookbackDays: unknown;
       config: unknown;
+      riskProfile: unknown;
       openOrders: unknown;
+      liveApproval: unknown;
     }>;
     const mode = coerceMode(payload.mode ?? process.env.AUTO_TRADING_MODE);
     if (mode === "live") {
-      return NextResponse.json({ error: "Live trading mode is not supported in this phase." }, { status: 400 });
+      const history = await readTradingRunHistory(100);
+      const readiness = evaluateLiveTradingReadiness(history, {
+        liveEnabled: optionalBoolean(process.env.AUTO_TRADING_LIVE_ENABLED) === true,
+        expectedConfirmationToken: optionalString(process.env.AUTO_TRADING_LIVE_CONFIRMATION_TOKEN),
+        confirmationToken: liveApprovalString(payload.liveApproval, "confirmationToken"),
+        approvedDryRunId: liveApprovalString(payload.liveApproval, "approvedDryRunId"),
+        latestDryRunId: latestDryRunId(history)
+      });
+
+      return NextResponse.json(
+        {
+          error: readiness.ready
+            ? "Live approval gates passed, but live order submission is still disabled in this build."
+            : "Live trading approval requirements are not met.",
+          readiness
+        },
+        { status: 400 }
+      );
     }
     if (mode === "off") {
       return NextResponse.json({ error: "Auto-trading mode is off." }, { status: 400 });
     }
 
     const envConfig = configFromEnv();
-    const config = mergeTradingConfig(envConfig, coerceConfig(payload.config));
+    const requestConfig = mergeTradingConfig(coerceConfig(payload.config), {
+      riskProfile: coerceRiskProfile(payload.riskProfile)
+    });
+    const config = mergeTradingConfig(envConfig, requestConfig);
     if (mode === "paper" && envConfig.paperTradingEnabled !== true) {
       return NextResponse.json({ error: "Paper trading is disabled. Set AUTO_TRADING_PAPER_ENABLED=true." }, { status: 400 });
     }
@@ -153,6 +177,7 @@ function coerceConfig(value: unknown): TradingConfigInput {
     paperTradingEnabled: optionalBoolean(raw.paperTradingEnabled),
     liveTradingEnabled: optionalBoolean(raw.liveTradingEnabled),
     useBracketOrders: optionalBoolean(raw.useBracketOrders),
+    riskProfile: coerceRiskProfile(raw.riskProfile),
     risk: {
       riskPerTradePct: optionalNumber(risk.riskPerTradePct),
       maxPositionPct: optionalNumber(risk.maxPositionPct),
@@ -165,6 +190,7 @@ function coerceConfig(value: unknown): TradingConfigInput {
       addMinScore: optionalNumber(risk.addMinScore),
       sellScoreThreshold: optionalNumber(risk.sellScoreThreshold),
       severeSellExitScoreThreshold: optionalNumber(risk.severeSellExitScoreThreshold),
+      weakHoldReduceScoreThreshold: optionalNumber(risk.weakHoldReduceScoreThreshold),
       topRelativeStrengthPct: optionalNumber(risk.topRelativeStrengthPct),
       maxEntryPricePremiumPct: optionalNumber(risk.maxEntryPricePremiumPct),
       maxEntrySma20PremiumPct: optionalNumber(risk.maxEntrySma20PremiumPct),
@@ -189,6 +215,7 @@ function configFromEnv(): TradingConfigInput {
     paperTradingEnabled: optionalBoolean(process.env.AUTO_TRADING_PAPER_ENABLED),
     liveTradingEnabled: optionalBoolean(process.env.AUTO_TRADING_LIVE_ENABLED),
     useBracketOrders: optionalBoolean(process.env.AUTO_TRADING_USE_BRACKET_ORDERS),
+    riskProfile: coerceRiskProfile(process.env.AUTO_TRADING_RISK_PROFILE),
     risk: {
       riskPerTradePct: optionalNumber(process.env.AUTO_TRADING_RISK_PER_TRADE_PCT),
       maxPositionPct: optionalNumber(process.env.AUTO_TRADING_MAX_POSITION_PCT),
@@ -201,6 +228,7 @@ function configFromEnv(): TradingConfigInput {
       addMinScore: optionalNumber(process.env.AUTO_TRADING_ADD_MIN_SCORE),
       sellScoreThreshold: optionalNumber(process.env.AUTO_TRADING_SELL_SCORE_THRESHOLD),
       severeSellExitScoreThreshold: optionalNumber(process.env.AUTO_TRADING_SEVERE_SELL_EXIT_SCORE_THRESHOLD),
+      weakHoldReduceScoreThreshold: optionalNumber(process.env.AUTO_TRADING_WEAK_HOLD_REDUCE_SCORE_THRESHOLD),
       topRelativeStrengthPct: optionalNumber(process.env.AUTO_TRADING_TOP_RELATIVE_STRENGTH_PCT),
       maxEntryPricePremiumPct: optionalNumber(process.env.AUTO_TRADING_MAX_ENTRY_PRICE_PREMIUM_PCT),
       maxEntrySma20PremiumPct: optionalNumber(process.env.AUTO_TRADING_MAX_ENTRY_SMA20_PREMIUM_PCT),
@@ -263,6 +291,14 @@ function optionalString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function liveApprovalString(value: unknown, key: "confirmationToken" | "approvedDryRunId") {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return optionalString((value as Record<string, unknown>)[key]);
+}
+
 function coerceSide(value: unknown): TradeSide | undefined {
   return value === "buy" || value === "sell" ? value : undefined;
 }
@@ -273,6 +309,10 @@ function coerceOptionalMode(value: unknown) {
   }
 
   return undefined;
+}
+
+function coerceRiskProfile(value: unknown): TradingRiskProfile | undefined {
+  return value === "active" || value === "balanced" || value === "cautious" ? value : undefined;
 }
 
 function optionalNumber(value: unknown) {
