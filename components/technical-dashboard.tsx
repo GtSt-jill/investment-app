@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition, type PointerEvent } from "react";
+import { useEffect, useMemo, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
 
 import { formatNumber, formatPercent, formatPrice } from "@/lib/format";
 import type { PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
@@ -297,7 +297,12 @@ export function TechnicalDashboard() {
             <p className="panel-eyebrow">Technical Detail</p>
             <h2>{selectedRow ? `${selectedRow.symbol} ${selectedRow.name}` : "銘柄詳細"}</h2>
           </div>
-          {selectedRow ? <SignalBadge row={selectedRow} /> : null}
+          {selectedRow ? (
+            <div className="detail-header-actions">
+              <ExternalResearchLinks symbol={selectedRow.symbol} compact />
+              <SignalBadge row={selectedRow} />
+            </div>
+          ) : null}
         </div>
 
         {selectedRow ? (
@@ -343,12 +348,13 @@ export function TechnicalDashboard() {
           <span className="muted-copy">{result?.asOf ? `${result.asOf} 時点` : ""}</span>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="signal-table">
             <thead>
               <tr>
                 <th>Rank</th>
                 <th>Symbol</th>
                 <th>Action</th>
+                <th>Links</th>
                 <th>Score</th>
                 <th>Change</th>
                 <th>Price</th>
@@ -373,6 +379,9 @@ export function TechnicalDashboard() {
                   </td>
                   <td>
                     <SignalBadge row={row} compact />
+                  </td>
+                  <td>
+                    <ExternalResearchLinks symbol={row.symbol} compact onClick={(event) => event.stopPropagation()} />
                   </td>
                   <td>
                     <ScoreMeter score={row.score} />
@@ -933,12 +942,37 @@ function SecuritySnapshot({ row }: { row: RecommendationItem }) {
         <span className="snapshot-meta">{row.segment}</span>
         <strong>{formatPrice(row.indicators.close)}</strong>
         <PriceMove value={row.indicators.dayChangePct} />
+        <ExternalResearchLinks symbol={row.symbol} />
       </div>
       <div className="snapshot-score">
         <span>Final Score</span>
         <strong>{row.score}</strong>
         <SignalBadge row={row} />
       </div>
+    </div>
+  );
+}
+
+function ExternalResearchLinks({
+  symbol,
+  compact = false,
+  onClick
+}: {
+  symbol: string;
+  compact?: boolean;
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const profileUrl = `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/profile`;
+  const newsUrl = `https://www.google.com/search?tbm=nws&q=${encodeURIComponent(`${symbol} stock news`)}`;
+
+  return (
+    <div className={`external-link-row ${compact ? "compact" : ""}`} aria-label={`${symbol} research links`}>
+      <a href={profileUrl} target="_blank" rel="noreferrer" onClick={onClick}>
+        企業情報
+      </a>
+      <a href={newsUrl} target="_blank" rel="noreferrer" onClick={onClick}>
+        関連ニュース
+      </a>
     </div>
   );
 }

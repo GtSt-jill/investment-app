@@ -214,6 +214,14 @@ button:disabled {
   margin-bottom: 16px;
 }
 
+.detail-header-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .compact-header {
   margin-bottom: 12px;
 }
@@ -1082,6 +1090,46 @@ button:disabled {
   font-size: 2rem;
 }
 
+.external-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.external-link-row a {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #f8fafc;
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 800;
+  min-height: 30px;
+  padding: 6px 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.external-link-row.compact {
+  margin-top: 0;
+}
+
+.external-link-row.compact a {
+  background: #edf2f7;
+  border-color: var(--line);
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  min-height: 28px;
+  padding: 5px 9px;
+}
+
+.external-link-row a:hover {
+  border-color: rgba(59, 99, 217, 0.42);
+  box-shadow: 0 8px 18px rgba(20, 30, 46, 0.08);
+}
+
 .price-line strong {
   font-size: 2.15rem;
   letter-spacing: -0.02em;
@@ -1320,9 +1368,17 @@ tbody tr:hover,
 }
 
 td:nth-child(6),
-td:nth-child(7),
 td:nth-child(8),
+td:nth-child(7),
 td:nth-child(9) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.signal-table td:nth-child(7),
+.signal-table td:nth-child(8),
+.signal-table td:nth-child(9),
+.signal-table td:nth-child(10) {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -1450,6 +1506,7 @@ tbody tr:last-child td {
   .panel-header,
   .run-row,
   .price-line,
+  .detail-header-actions,
   .security-snapshot {
     align-items: stretch;
     flex-direction: column;
