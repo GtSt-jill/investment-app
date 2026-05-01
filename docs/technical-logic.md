@@ -1,8 +1,8 @@
-# 半導体銘柄テクニカル分析ロジック
+# カテゴリ別銘柄テクニカル分析ロジック
 
-このドキュメントは、主要半導体・AI 関連銘柄を `BUY` / `HOLD` / `SELL` に分類する分析ロジックを説明します。UI では断定的な表現を避け、`BUY` は「買い検討」、`HOLD` は「監視継続」、`SELL` は「新規買い回避」と表示します。
+このドキュメントは、半導体、大型テック、AI・ソフトウェア、クラウド・データ、クリーンエネルギー、産業・自動化などのカテゴリ別ウォッチリストを `BUY` / `HOLD` / `SELL` に分類する分析ロジックを説明します。UI では断定的な表現を避け、`BUY` は「買い検討」、`HOLD` は「監視継続」、`SELL` は「新規買い回避」と表示します。
 
-現行ロジックは、従来の価格・出来高テクニカルに加えて、銘柄自身の履歴に対する正規化、QQQ / SMH を proxy にした CAPM 風ファクター分析、バックテスト用の検証基盤を持ちます。
+現行ロジックは、従来の価格・出来高テクニカルに加えて、銘柄自身の履歴に対する正規化、QQQ / SMH を proxy にした CAPM 風ファクター分析、バックテスト用の検証基盤を持ちます。UI では `ALL` とカテゴリ別の表示を切り替えられますが、分析 API には選択された銘柄ユニバース全体を渡し、その結果をカテゴリで絞り込んで表示します。
 
 実装の中心は次のファイルです。
 
@@ -12,6 +12,8 @@
 - `lib/semiconductors/factors.ts`
 - `lib/semiconductors/backtest.ts`
 - `lib/semiconductors/types.ts`
+
+`types.ts` では `SECURITY_CATEGORIES` と `DEFAULT_MARKET_UNIVERSE` が定義されています。カテゴリを追加する場合は、カテゴリ定義と銘柄リストを追加すれば、API の allowlist、UI のカテゴリタブ、分析対象が同じ定義から更新されます。後方互換用に `DEFAULT_SEMICONDUCTOR_UNIVERSE` は残しています。
 
 ## 全体フロー
 
@@ -116,7 +118,7 @@ flowchart LR
   E --> F["relativeStrengthScore / relativeStrengthRank"]
 ```
 
-このカテゴリにより、単独で強いだけでなく、半導体セクター内で相対的に資金が向かっている銘柄を評価できます。63日だけが強く、20日または126日が伴わない銘柄は、持続性確認が不足しているものとして合成スコアが抑えられます。
+このカテゴリにより、単独で強いだけでなく、分析対象ユニバース内で相対的に資金が向かっている銘柄を評価できます。UI をカテゴリ表示に切り替えた場合、表示上のランキングや候補リストはそのカテゴリだけに絞られますが、分析時の相対強度はリクエストされたユニバースを母集団にして計算されます。63日だけが強く、20日または126日が伴わない銘柄は、持続性確認が不足しているものとして合成スコアが抑えられます。
 
 ### riskScore
 
@@ -194,9 +196,9 @@ scoreAdjustments: Array<{
 | Proxy | 用途 |
 | --- | --- |
 | QQQ | 市場・大型グロース proxy |
-| SMH | 半導体セクター proxy |
+| SMH | 半導体セクター、およびグロース・AI 関連リスクの補助 proxy |
 
-`analyzer.ts` では、銘柄リターンを QQQ / SMH のリターンと日付で突き合わせ、β、年率換算 α、残差ボラティリティ、factorScore を計算します。
+`analyzer.ts` では、銘柄リターンを QQQ / SMH のリターンと日付で突き合わせ、β、年率換算 α、残差ボラティリティ、factorScore を計算します。半導体以外のカテゴリでも同じ proxy を使うため、SMH への感応度は「半導体要因そのもの」ではなく、AI・設備投資・高ベータグロースに近い値動きの補助指標として解釈します。
 
 ```ts
 factorAnalysis: {
@@ -353,7 +355,7 @@ calculateSignalChange(previousAction, currentAction)
 - `POSITION_ALLOCATION_LIMIT_EXCEEDED`
 - `DUPLICATE_OPEN_ORDER`
 
-`ENTRY_SCORE_DETERIORATING` と `SIGNAL_STABILITY_ADJUSTMENT_TOO_LOW` は、分析結果に `scoreChange` または `signal-stability` 調整が含まれる場合だけ働く補助ゲートです。通常の `analyzeSemiconductors()` 出力だけで過去スコア比較を行うものではありません。
+`ENTRY_SCORE_DETERIORATING` と `SIGNAL_STABILITY_ADJUSTMENT_TOO_LOW` は、分析結果に `scoreChange` または `signal-stability` 調整が含まれる場合だけ働く補助ゲートです。通常の `analyzeMarketUniverse()` / `analyzeSemiconductors()` 出力だけで過去スコア比較を行うものではありません。
 
 ## Real-money readiness criteria
 
@@ -395,7 +397,7 @@ runSignalBacktest(barsBySymbol, universe?, options?)
 特徴:
 
 - ネットワーク呼び出しなしの純粋 TypeScript
-- 過去の各 as-of 時点で `analyzeSemiconductors()` を実行
+- 過去の各 as-of 時点で `analyzeSemiconductors()` を実行。半導体以外を検証する場合は、対象カテゴリを含む `universe` を明示して渡す
 - 銘柄間の相対強度母集団が日ごとに崩れないよう、検証日は対象銘柄すべてに日足がある共通日付に限定
 - 既定では 20 / 63 営業日先を検証
 - Action 別、スコア帯別、Action + スコア帯別に集計
@@ -444,4 +446,4 @@ runSignalBacktest(barsBySymbol, universe?, options?)
 
 `SELL` は「新規買い回避」または「弱含み」であり、未保有銘柄の空売りや、保有銘柄の即時全売却を自動的に意味しません。保有銘柄の売却可否は `trading/intent.ts` の意図分類とリスク設定で判断します。
 
-半導体銘柄は、決算、ガイダンス、AI需要、輸出規制、金利、為替、設備投資サイクルの影響を強く受けます。このロジックは価格・出来高・市場 proxy を中心に見るため、ファンダメンタルズやニュースと組み合わせて使う前提です。
+分析対象はテック、AI、半導体、エネルギー、産業テックなどを含むため、カテゴリごとに決算、ガイダンス、金利、為替、規制、設備投資サイクル、コモディティ価格など異なるリスク要因を受けます。このロジックは価格・出来高・市場 proxy を中心に見るため、ファンダメンタルズやニュースと組み合わせて使う前提です。

@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to analyze semiconductor stocks.";
+    const message = error instanceof Error ? error.message : "Failed to analyze market universe.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

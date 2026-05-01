@@ -1,16 +1,17 @@
-# Semiconductor Technical Signals
+# Market Technical Signals
 
-Alpaca API を使って、半導体・AI 関連銘柄のテクニカルシグナルと Alpaca 口座のポートフォリオ状況を確認する Next.js アプリです。
+Alpaca API を使って、カテゴリ別ウォッチリストのテクニカルシグナルと Alpaca 口座のポートフォリオ状況を確認する Next.js アプリです。
 
 このアプリは次の 3 つの主要タブを持ちます。
 
-- 銘柄シグナル: Alpaca Market Data から日足 OHLCV を取得し、主要半導体銘柄を `買い検討` / `監視継続` / `新規買い回避` に分類します。
+- 銘柄シグナル: Alpaca Market Data から日足 OHLCV を取得し、半導体、大型テック、AI・ソフトウェア、クラウド・データ、クリーンエネルギー、産業・自動化の銘柄を `買い検討` / `監視継続` / `新規買い回避` に分類します。
 - ポートフォリオ: Alpaca Trading API から API キー発行元アカウントの口座サマリー、買付余力、保有ポジション、含み損益を表示します。
 - 自動売買: dry-run / paper の注文計画、ブロック理由、run 履歴を確認します。
 
 ## Features
 
-- 半導体・AI 関連ウォッチリストの横断分析
+- カテゴリ別ウォッチリストの横断分析
+- ALL / カテゴリ別の表示切り替えと、カテゴリ単位の銘柄選択
 - 分析指標:
   - 20 / 50 / 200 日移動平均
   - RSI
@@ -66,7 +67,7 @@ Alpaca API を使って、半導体・AI 関連銘柄のテクニカルシグナ
 app/
   api/
     portfolio/route.ts       # Alpaca Trading API から口座・ポジション取得
-    semiconductors/route.ts  # Alpaca Market Data から日足取得、分析実行
+    semiconductors/route.ts  # Alpaca Market Data から日足取得、カテゴリ別分析を実行
     trading/run/route.ts     # dry-run / paper の自動売買ワークフロー
     trading/runs/route.ts    # 自動売買 run 履歴
   page.tsx                   # アプリのトップページ
@@ -82,7 +83,7 @@ lib/
     normalization.ts         # 銘柄別パーセンタイル / Z スコア
     portfolio.ts             # Trading API クライアントとポートフォリオ整形
     trading/                 # 意図分類、サイズ計算、risk check、paper 実行
-    types.ts                 # 分析結果の型と対象銘柄
+    types.ts                 # 分析結果の型、カテゴリ、対象銘柄
 scripts/
   auto-trading-run.mjs       # cron / scheduler 向け runner
 docs/
@@ -142,7 +143,22 @@ npm run dev
 http://localhost:3000
 ```
 
-初回表示時に銘柄シグナルを取得します。ポートフォリオデータは「ポートフォリオ」タブを開いたタイミングで取得します。
+初回表示時にデフォルトのカテゴリ別ウォッチリスト全体を取得します。銘柄シグナル画面では `ALL` またはカテゴリを選んでランキング、候補リスト、詳細を切り替えられます。ポートフォリオデータは「ポートフォリオ」タブを開いたタイミングで取得します。
+
+## Watchlist Categories
+
+既定ユニバースは `lib/semiconductors/types.ts` の `SECURITY_CATEGORIES` と `DEFAULT_MARKET_UNIVERSE` で管理します。
+
+| カテゴリ | 用途 |
+| --- | --- |
+| 半導体 | 半導体、製造装置、EDA、サプライチェーン |
+| 大型テック | プラットフォーム、クラウド、消費者向けテック |
+| AI・ソフトウェア | AI、SaaS、データ分析、サイバーセキュリティ |
+| クラウド・データ | ストレージ、ネットワーク、データ基盤 |
+| クリーンエネルギー | 太陽光、EV、電力・蓄電関連 |
+| 産業・自動化 | 産業テック、計測、製造自動化 |
+
+カテゴリを追加する場合は、カテゴリ定義と銘柄リストを同じファイルに追加します。UI のカテゴリタブ、API の symbol allowlist、分析対象はこの定義から派生します。`/api/semiconductors` という route 名は既存互換のため残していますが、現在はカテゴリ別ユニバース全体を扱います。
 
 ## Scripts
 
@@ -163,18 +179,18 @@ TMPDIR=/tmp npm test
 
 ### `POST /api/semiconductors`
 
-半導体ウォッチリストを分析します。
+カテゴリ別ウォッチリストを分析します。
 
 Request body:
 
 ```json
 {
-  "symbols": ["NVDA", "AMD", "AVGO"],
+  "symbols": ["NVDA", "MSFT", "PLTR", "ENPH"],
   "lookbackDays": 520
 }
 ```
 
-`symbols` を省略するとデフォルトのウォッチリスト全体を分析します。`lookbackDays` は 260-900 の範囲に丸められます。
+`symbols` を省略するとデフォルトのカテゴリ別ウォッチリスト全体を分析します。`symbols` は既定ユニバースに含まれるティッカーだけを受け付けます。`lookbackDays` は 260-900 の範囲に丸められます。
 
 ### `GET /api/portfolio`
 
@@ -187,7 +203,7 @@ Alpaca Trading API から次を取得します。
 
 ### `POST /api/trading/run`
 
-半導体分析、ポートフォリオ、未約定注文を取得して、注文計画を作ります。`mode` は `dry-run` または `paper` を受け付けます。`live` は現時点では API と scheduler の両方で拒否します。
+カテゴリ別ウォッチリストの分析、ポートフォリオ、未約定注文を取得して、注文計画を作ります。`mode` は `dry-run` または `paper` を受け付けます。`live` は現時点では API と scheduler の両方で拒否します。
 
 `dry-run` は Alpaca に発注せず、`plans`、`orders`、`summary`、ブロック理由を返します。`paper` は `AUTO_TRADING_PAPER_ENABLED=true` が環境変数で設定されている場合だけ、`planned` の注文を Alpaca paper account に送信します。request body の `config.paperTradingEnabled` だけでは paper 発注を有効化できません。
 
@@ -234,7 +250,7 @@ finalScore =
 + volumeScore * 0.10
 ```
 
-このベーススコアに対して、銘柄自身の履歴に対する正規化指標と、QQQ / SMH へのファクター分析結果を小さく加減点します。調整だけで `BUY` 閾値をまたがないようにし、既存のテクニカル判定を補助する用途に限定しています。
+このベーススコアに対して、銘柄自身の履歴に対する正規化指標と、QQQ / SMH へのファクター分析結果を小さく加減点します。SMH は半導体カテゴリに限らず、グロース・AI 関連のリスク proxy として補助的に使います。調整だけで `BUY` 閾値をまたがないようにし、既存のテクニカル判定を補助する用途に限定しています。
 
 バックテスト用に `runSignalBacktest()` も用意しており、過去の分析時点ごとに 20 / 63 営業日先リターン、勝率、中央値リターン、profit factor、downside deviation、最大逆行、最大ドローダウンを Action やスコア帯別に集計できます。
 

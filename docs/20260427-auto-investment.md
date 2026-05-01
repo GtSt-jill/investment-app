@@ -1,11 +1,11 @@
 # テクニカル分析結果に基づく自動売買機能 計画書
 
 作成日: 2026-04-27
-更新日: 2026-04-29
+更新日: 2026-05-01
 
 ## 目的
 
-既存の半導体銘柄テクニカル分析結果をもとに、Alpaca Trading API へ注文を出せる自動売買機能を段階的に実装する。
+既存のカテゴリ別ウォッチリストのテクニカル分析結果をもとに、Alpaca Trading API へ注文を出せる自動売買機能を段階的に実装する。
 
 ただし、現在の `BUY` / `HOLD` / `SELL` は投資候補の分類であり、そのまま自動発注に直結させるには危険が大きい。自動売買機能では、分析結果を次の順に変換する。
 
@@ -28,6 +28,7 @@
   - 日足 OHLCV からテクニカル指標を計算する。
   - `RecommendationItem` を生成する。
   - `action` は `BUY` / `HOLD` / `SELL`。
+  - `analyzeMarketUniverse()` はカテゴリ別ウォッチリスト全体を分析し、既存の `analyzeSemiconductors()` は後方互換用の半導体既定ユニバースを持つ。
   - 銘柄別正規化、QQQ / SMH proxy のファクター分析、`scoreAdjustments` を返す。
   - `buyZone` に `idealEntry` / `pullbackEntry` / `stopLoss` / `takeProfit` を持つ。
 - `lib/semiconductors/normalization.ts`
@@ -42,7 +43,7 @@
 - `lib/semiconductors/trading/*`
   - 分析結果を売買意図、注文サイズ、注文計画、paper 実行、履歴保存へ変換する。
 - `app/api/semiconductors/route.ts`
-  - Alpaca Market Data API から日足を取得し、分析結果を返す。
+  - Alpaca Market Data API から日足を取得し、カテゴリ別ウォッチリストの分析結果を返す。
 - `app/api/portfolio/route.ts`
   - Alpaca Trading API からポートフォリオ情報を返す。
 - `app/api/trading/run/route.ts`
@@ -195,7 +196,7 @@ quantity = min(quantityByRisk, quantityByAllocation, quantityByBuyingPower)
 | --- | ---: |
 | 1トレードの最大許容損失 | 口座評価額の 0.5% |
 | 1銘柄の最大配分 | 口座評価額の 8% |
-| 半導体銘柄群の最大配分 | 口座評価額の 50% |
+| 分析対象カテゴリ群の最大配分 | 口座評価額の 50% |
 | 1日の新規エントリー数 | 3件 |
 | 1日の最大発注額 | 口座評価額の 15% |
 | 最小注文金額 | 100 USD |
