@@ -19,6 +19,13 @@ export interface RiskConfig {
   severeSellExitScoreThreshold?: number | null;
   topRelativeStrengthPct: number;
   maxEntryPricePremiumPct: number;
+  maxEntrySma20PremiumPct: number;
+  maxEntryDayChangePct: number;
+  minEntryRewardRiskRatio: number;
+  neutralEntryScoreBuffer: number;
+  unstableSignalScoreBuffer: number;
+  minEntryScoreChange: number;
+  minSignalStabilityAdjustment: number;
   reducePositionPct: number;
   allowAddToLosingPositions: boolean;
   allowPatternDayTraderBuys: boolean;
@@ -57,6 +64,13 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   severeSellExitScoreThreshold: 15,
   topRelativeStrengthPct: 0.35,
   maxEntryPricePremiumPct: 0.03,
+  maxEntrySma20PremiumPct: 0.08,
+  maxEntryDayChangePct: 0.04,
+  minEntryRewardRiskRatio: 1.5,
+  neutralEntryScoreBuffer: 5,
+  unstableSignalScoreBuffer: 3,
+  minEntryScoreChange: 0,
+  minSignalStabilityAdjustment: 0,
   reducePositionPct: 0.5,
   allowAddToLosingPositions: false,
   allowPatternDayTraderBuys: false

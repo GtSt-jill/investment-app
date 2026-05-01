@@ -58,6 +58,10 @@ export function relativeStrengthIndex(values: number[], length = 14) {
     averageLoss = (averageLoss * (length - 1) + Math.max(-change, 0)) / length;
   }
 
+  if (averageGain === 0 && averageLoss === 0) {
+    return 50;
+  }
+
   if (averageLoss === 0) {
     return 100;
   }

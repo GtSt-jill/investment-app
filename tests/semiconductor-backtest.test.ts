@@ -51,12 +51,111 @@ describe("runSignalBacktest", () => {
     expect(result.summary.skippedByHorizon[63]).toBeGreaterThan(0);
     expect(result.summary.totalOutcomes).toBe(horizon20Count);
   });
+
+  it("adds robust return distribution and adverse excursion metrics", () => {
+    const result = runSignalBacktest(
+      {
+        BUYER: makeBars(70, 0.64, { length: 340, volumeMode: "rising" }),
+        SELLER: makeBars(190, -0.5, { length: 340, volumeMode: "falling" })
+      },
+      universe,
+      { horizons: [20] }
+    );
+
+    const buy = findAction(result.byAction, "BUY");
+    const metrics = buy.horizons[20];
+    const outcomes = result.events
+      .filter((event) => event.action === "BUY")
+      .map((event) => event.outcomes.find((outcome) => outcome.horizon === 20))
+      .filter((outcome): outcome is NonNullable<typeof outcome> => outcome !== undefined);
+    const returns = outcomes.map((outcome) => outcome.forwardReturn);
+    const maxDrawdowns = outcomes.map((outcome) => outcome.maxDrawdown);
+    const adverseExcursions = outcomes.map((outcome) => outcome.maxAdverseExcursion);
+
+    expect(outcomes.length).toBe(metrics.count);
+    expect(metrics.losses).toBe(returns.filter((value) => value < 0).length);
+    expect(metrics.lossRate).toBe(metrics.losses / metrics.count);
+    expect(metrics.medianReturn).toBeCloseTo(percentile(returns, 0.5));
+    expect(metrics.averageWin).toBeCloseTo(average(returns.filter((value) => value > 0)));
+    expect(metrics.averageLoss).toBe(0);
+    expect(metrics.grossProfit).toBeCloseTo(sum(returns.filter((value) => value > 0)));
+    expect(metrics.grossLoss).toBe(0);
+    expect(metrics.profitFactor).toBe(Number.POSITIVE_INFINITY);
+    expect(metrics.payoffRatio).toBeNull();
+    expect(metrics.returnPercentiles.p10).toBeCloseTo(percentile(returns, 0.1));
+    expect(metrics.returnPercentiles.p25).toBeCloseTo(percentile(returns, 0.25));
+    expect(metrics.returnPercentiles.p50).toBe(metrics.medianReturn);
+    expect(metrics.returnPercentiles.p75).toBeCloseTo(percentile(returns, 0.75));
+    expect(metrics.returnPercentiles.p90).toBeCloseTo(percentile(returns, 0.9));
+    expect(metrics.medianMaxDrawdown).toBeCloseTo(percentile(maxDrawdowns, 0.5));
+    expect(metrics.medianAdverseExcursion).toBeCloseTo(percentile(adverseExcursions, 0.5));
+    expect(metrics.worstAdverseExcursion).toBe(Math.min(...adverseExcursions));
+    expect(metrics.averageAdverseCapture).toBeNull();
+  });
+
+  it("calculates loss-side metrics and adverse capture for losing buckets", () => {
+    const result = runSignalBacktest(
+      {
+        BUYER: makeBars(70, 0.64, { length: 340, volumeMode: "rising" }),
+        SELLER: makeBars(190, -0.5, { length: 340, volumeMode: "falling" })
+      },
+      universe,
+      { horizons: [20] }
+    );
+
+    const sell = findAction(result.byAction, "SELL");
+    const metrics = sell.horizons[20];
+    const outcomes = result.events
+      .filter((event) => event.action === "SELL")
+      .map((event) => event.outcomes.find((outcome) => outcome.horizon === 20))
+      .filter((outcome): outcome is NonNullable<typeof outcome> => outcome !== undefined);
+    const returns = outcomes.map((outcome) => outcome.forwardReturn);
+    const losses = returns.filter((value) => value < 0);
+    const adverseCaptures = outcomes
+      .filter((outcome) => outcome.forwardReturn < 0 && outcome.maxAdverseExcursion < 0)
+      .map((outcome) => Math.abs(outcome.forwardReturn) / Math.abs(outcome.maxAdverseExcursion));
+
+    expect(metrics.losses).toBe(losses.length);
+    expect(metrics.averageWin).toBe(0);
+    expect(metrics.averageLoss).toBeCloseTo(average(losses));
+    expect(metrics.grossProfit).toBe(0);
+    expect(metrics.grossLoss).toBeCloseTo(Math.abs(sum(losses)));
+    expect(metrics.profitFactor).toBe(0);
+    expect(metrics.payoffRatio).toBeNull();
+    expect(metrics.averageDownsideReturn).toBeCloseTo(sum(losses) / metrics.count);
+    expect(metrics.downsideDeviation).toBeCloseTo(
+      Math.sqrt(sum(returns.map((value) => Math.min(value, 0) ** 2)) / metrics.count)
+    );
+    expect(metrics.averageAdverseCapture).toBeCloseTo(average(adverseCaptures));
+  });
 });
 
 function findAction(result: ReturnType<typeof runSignalBacktest>["byAction"], action: "BUY" | "HOLD" | "SELL") {
   const group = result.find((item) => item.action === action);
   expect(group).toBeDefined();
   return group!;
+}
+
+function sum(values: number[]) {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function average(values: number[]) {
+  return values.length === 0 ? 0 : sum(values) / values.length;
+}
+
+function percentile(values: number[], quantile: number) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = (sorted.length - 1) * quantile;
+  const lowerIndex = Math.floor(index);
+  const upperIndex = Math.ceil(index);
+
+  if (lowerIndex === upperIndex) {
+    return sorted[lowerIndex];
+  }
+
+  const weight = index - lowerIndex;
+  return sorted[lowerIndex] * (1 - weight) + sorted[upperIndex] * weight;
 }
 
 function makeBars(

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { averageTrueRange, averageTrueRangePct, momentum, simpleMovingAverage } from "@/lib/semiconductors/indicators";
+import {
+  averageTrueRange,
+  averageTrueRangePct,
+  momentum,
+  relativeStrengthIndex,
+  simpleMovingAverage
+} from "@/lib/semiconductors/indicators";
 import type { PriceBar } from "@/lib/semiconductors/types";
 
 describe("semiconductor indicators", () => {
@@ -27,6 +33,12 @@ describe("semiconductor indicators", () => {
 
   it("computes momentum", () => {
     expect(momentum([100, 105, 110, 121], 3)).toBeCloseTo(0.21, 5);
+  });
+
+  it("treats flat RSI as neutral while preserving one-sided trend extremes", () => {
+    expect(relativeStrengthIndex(Array.from({ length: 20 }, () => 100), 14)).toBe(50);
+    expect(relativeStrengthIndex(Array.from({ length: 20 }, (_, index) => 100 + index), 14)).toBe(100);
+    expect(relativeStrengthIndex(Array.from({ length: 20 }, (_, index) => 100 - index), 14)).toBe(0);
   });
 });
 

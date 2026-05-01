@@ -30,6 +30,14 @@ export interface SignalBacktestOutcome {
   maxAdverseExcursion: number;
 }
 
+export interface SignalBacktestReturnPercentiles {
+  p10: number | null;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+}
+
 export interface SignalBacktestEvent {
   symbol: string;
   asOf: string;
@@ -49,10 +57,26 @@ export interface SignalBacktestHorizonMetrics {
   horizon: number;
   count: number;
   wins: number;
+  losses: number;
   winRate: number;
+  lossRate: number;
   averageReturn: number;
+  medianReturn: number | null;
+  averageWin: number;
+  averageLoss: number;
+  grossProfit: number;
+  grossLoss: number;
+  profitFactor: number | null;
+  payoffRatio: number | null;
+  downsideDeviation: number;
+  averageDownsideReturn: number;
+  returnPercentiles: SignalBacktestReturnPercentiles;
   averageMaxDrawdown: number;
+  medianMaxDrawdown: number | null;
   averageAdverseExcursion: number;
+  medianAdverseExcursion: number | null;
+  worstAdverseExcursion: number | null;
+  averageAdverseCapture: number | null;
   bestReturn: number | null;
   worstReturn: number | null;
 }
@@ -92,9 +116,18 @@ interface MutableHorizonMetrics {
   horizon: number;
   count: number;
   wins: number;
+  losses: number;
   totalReturn: number;
+  totalWinReturn: number;
+  totalLossReturn: number;
+  totalSquaredDownsideReturn: number;
   totalMaxDrawdown: number;
   totalAdverseExcursion: number;
+  totalAdverseCapture: number;
+  adverseCaptureCount: number;
+  returns: number[];
+  maxDrawdowns: number[];
+  adverseExcursions: number[];
   bestReturn: number | null;
   worstReturn: number | null;
 }
@@ -121,7 +154,7 @@ export function runSignalBacktest(
   const sampleEvery = normalizePositiveInteger(options.sampleEvery, 1);
   const symbols = universe.map((profile) => profile.symbol);
   const normalizedBars = normalizeBarsBySymbol(barsBySymbol, symbols);
-  const dateUniverse = buildDateUniverse(normalizedBars, options.startDate, options.endDate);
+  const dateUniverse = buildCommonDateUniverse(normalizedBars, symbols, options.startDate, options.endDate);
   const marketBars = {
     semiconductor: normalizeBars(options.marketBars?.semiconductor ?? []),
     qqq: normalizeBars(options.marketBars?.qqq ?? [])
@@ -321,9 +354,20 @@ function aggregateGroups(
       const metrics = group.horizons.get(outcome.horizon) ?? emptyMutableHorizon(outcome.horizon);
       metrics.count += 1;
       metrics.wins += outcome.forwardReturn > 0 ? 1 : 0;
+      metrics.losses += outcome.forwardReturn < 0 ? 1 : 0;
       metrics.totalReturn += outcome.forwardReturn;
+      metrics.totalWinReturn += Math.max(outcome.forwardReturn, 0);
+      metrics.totalLossReturn += Math.min(outcome.forwardReturn, 0);
+      metrics.totalSquaredDownsideReturn += Math.min(outcome.forwardReturn, 0) ** 2;
       metrics.totalMaxDrawdown += outcome.maxDrawdown;
       metrics.totalAdverseExcursion += outcome.maxAdverseExcursion;
+      metrics.returns.push(outcome.forwardReturn);
+      metrics.maxDrawdowns.push(outcome.maxDrawdown);
+      metrics.adverseExcursions.push(outcome.maxAdverseExcursion);
+      if (outcome.forwardReturn < 0 && outcome.maxAdverseExcursion < 0) {
+        metrics.totalAdverseCapture += Math.abs(outcome.forwardReturn) / Math.abs(outcome.maxAdverseExcursion);
+        metrics.adverseCaptureCount += 1;
+      }
       metrics.bestReturn =
         metrics.bestReturn === null ? outcome.forwardReturn : Math.max(metrics.bestReturn, outcome.forwardReturn);
       metrics.worstReturn =
@@ -353,14 +397,37 @@ function finalizeGroup(group: MutableGroup): SignalBacktestGroupSummary {
 }
 
 function finalizeHorizon(metrics: MutableHorizonMetrics): SignalBacktestHorizonMetrics {
+  const averageWin = metrics.wins === 0 ? 0 : metrics.totalWinReturn / metrics.wins;
+  const averageLoss = metrics.losses === 0 ? 0 : metrics.totalLossReturn / metrics.losses;
+  const grossLoss = Math.abs(metrics.totalLossReturn);
+  const payoffRatio = averageWin > 0 && averageLoss < 0 ? averageWin / Math.abs(averageLoss) : null;
+  const returnPercentiles = percentileSummary(metrics.returns);
+
   return {
     horizon: metrics.horizon,
     count: metrics.count,
     wins: metrics.wins,
+    losses: metrics.losses,
     winRate: metrics.count === 0 ? 0 : metrics.wins / metrics.count,
+    lossRate: metrics.count === 0 ? 0 : metrics.losses / metrics.count,
     averageReturn: metrics.count === 0 ? 0 : metrics.totalReturn / metrics.count,
+    medianReturn: returnPercentiles.p50,
+    averageWin,
+    averageLoss,
+    grossProfit: metrics.totalWinReturn,
+    grossLoss,
+    profitFactor: grossLoss > 0 ? metrics.totalWinReturn / grossLoss : metrics.totalWinReturn > 0 ? Number.POSITIVE_INFINITY : null,
+    payoffRatio,
+    downsideDeviation: metrics.count === 0 ? 0 : Math.sqrt(metrics.totalSquaredDownsideReturn / metrics.count),
+    averageDownsideReturn: metrics.count === 0 ? 0 : metrics.totalLossReturn / metrics.count,
+    returnPercentiles,
     averageMaxDrawdown: metrics.count === 0 ? 0 : metrics.totalMaxDrawdown / metrics.count,
+    medianMaxDrawdown: percentile(metrics.maxDrawdowns, 0.5),
     averageAdverseExcursion: metrics.count === 0 ? 0 : metrics.totalAdverseExcursion / metrics.count,
+    medianAdverseExcursion: percentile(metrics.adverseExcursions, 0.5),
+    worstAdverseExcursion: metrics.adverseExcursions.length === 0 ? null : Math.min(...metrics.adverseExcursions),
+    averageAdverseCapture:
+      metrics.adverseCaptureCount === 0 ? null : metrics.totalAdverseCapture / metrics.adverseCaptureCount,
     bestReturn: metrics.bestReturn,
     worstReturn: metrics.worstReturn
   };
@@ -371,12 +438,50 @@ function emptyMutableHorizon(horizon: number): MutableHorizonMetrics {
     horizon,
     count: 0,
     wins: 0,
+    losses: 0,
     totalReturn: 0,
+    totalWinReturn: 0,
+    totalLossReturn: 0,
+    totalSquaredDownsideReturn: 0,
     totalMaxDrawdown: 0,
     totalAdverseExcursion: 0,
+    totalAdverseCapture: 0,
+    adverseCaptureCount: 0,
+    returns: [],
+    maxDrawdowns: [],
+    adverseExcursions: [],
     bestReturn: null,
     worstReturn: null
   };
+}
+
+function percentileSummary(values: number[]): SignalBacktestReturnPercentiles {
+  return {
+    p10: percentile(values, 0.1),
+    p25: percentile(values, 0.25),
+    p50: percentile(values, 0.5),
+    p75: percentile(values, 0.75),
+    p90: percentile(values, 0.9)
+  };
+}
+
+function percentile(values: number[], quantile: number) {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const boundedQuantile = clamp(quantile, 0, 1);
+  const index = (sorted.length - 1) * boundedQuantile;
+  const lowerIndex = Math.floor(index);
+  const upperIndex = Math.ceil(index);
+
+  if (lowerIndex === upperIndex) {
+    return sorted[lowerIndex];
+  }
+
+  const weight = index - lowerIndex;
+  return sorted[lowerIndex] * (1 - weight) + sorted[upperIndex] * weight;
 }
 
 function compareGroups(left: SignalBacktestGroupSummary, right: SignalBacktestGroupSummary) {
@@ -416,14 +521,30 @@ function buildAsOfBars(
   return result;
 }
 
-function buildDateUniverse(barsBySymbol: Record<string, PriceBar[]>, startDate?: string, endDate?: string) {
-  return Array.from(
-    new Set(
-      Object.values(barsBySymbol)
-        .flatMap((bars) => bars.map((bar) => bar.date))
-        .filter((date) => (!startDate || date >= startDate) && (!endDate || date <= endDate))
+function buildCommonDateUniverse(
+  barsBySymbol: Record<string, PriceBar[]>,
+  symbols: string[],
+  startDate?: string,
+  endDate?: string
+) {
+  const dateSets = symbols
+    .map((symbol) => barsBySymbol[symbol] ?? [])
+    .filter((bars) => bars.length > 0)
+    .map((bars) => new Set(bars.map((bar) => bar.date)));
+
+  if (dateSets.length === 0 || dateSets.length !== symbols.length) {
+    return [];
+  }
+
+  const [firstSet, ...remainingSets] = dateSets;
+  return Array.from(firstSet)
+    .filter(
+      (date) =>
+        (!startDate || date >= startDate) &&
+        (!endDate || date <= endDate) &&
+        remainingSets.every((dateSet) => dateSet.has(date))
     )
-  ).sort((left, right) => left.localeCompare(right));
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function normalizeBarsBySymbol(barsBySymbol: Record<string, PriceBar[]>, symbols: string[]) {

@@ -162,8 +162,21 @@ function coerceConfig(value: unknown): TradingConfigInput {
       minOrderNotional: optionalNumber(risk.minOrderNotional),
       maxAtrPct: optionalNumber(risk.maxAtrPct),
       minEntryScore: optionalNumber(risk.minEntryScore),
+      addMinScore: optionalNumber(risk.addMinScore),
+      sellScoreThreshold: optionalNumber(risk.sellScoreThreshold),
+      severeSellExitScoreThreshold: optionalNumber(risk.severeSellExitScoreThreshold),
       topRelativeStrengthPct: optionalNumber(risk.topRelativeStrengthPct),
-      maxEntryPricePremiumPct: optionalNumber(risk.maxEntryPricePremiumPct)
+      maxEntryPricePremiumPct: optionalNumber(risk.maxEntryPricePremiumPct),
+      maxEntrySma20PremiumPct: optionalNumber(risk.maxEntrySma20PremiumPct),
+      maxEntryDayChangePct: optionalNumber(risk.maxEntryDayChangePct),
+      minEntryRewardRiskRatio: optionalNumber(risk.minEntryRewardRiskRatio),
+      neutralEntryScoreBuffer: optionalNumber(risk.neutralEntryScoreBuffer),
+      unstableSignalScoreBuffer: optionalNumber(risk.unstableSignalScoreBuffer),
+      minEntryScoreChange: optionalNumber(risk.minEntryScoreChange),
+      minSignalStabilityAdjustment: optionalNumber(risk.minSignalStabilityAdjustment),
+      reducePositionPct: optionalNumber(risk.reducePositionPct),
+      allowAddToLosingPositions: optionalBoolean(risk.allowAddToLosingPositions),
+      allowPatternDayTraderBuys: optionalBoolean(risk.allowPatternDayTraderBuys)
     }
   };
 }
@@ -185,8 +198,21 @@ function configFromEnv(): TradingConfigInput {
       minOrderNotional: optionalNumber(process.env.AUTO_TRADING_MIN_ORDER_NOTIONAL),
       maxAtrPct: optionalNumber(process.env.AUTO_TRADING_MAX_ATR_PCT),
       minEntryScore: optionalNumber(process.env.AUTO_TRADING_MIN_ENTRY_SCORE),
+      addMinScore: optionalNumber(process.env.AUTO_TRADING_ADD_MIN_SCORE),
+      sellScoreThreshold: optionalNumber(process.env.AUTO_TRADING_SELL_SCORE_THRESHOLD),
+      severeSellExitScoreThreshold: optionalNumber(process.env.AUTO_TRADING_SEVERE_SELL_EXIT_SCORE_THRESHOLD),
       topRelativeStrengthPct: optionalNumber(process.env.AUTO_TRADING_TOP_RELATIVE_STRENGTH_PCT),
-      maxEntryPricePremiumPct: optionalNumber(process.env.AUTO_TRADING_MAX_ENTRY_PRICE_PREMIUM_PCT)
+      maxEntryPricePremiumPct: optionalNumber(process.env.AUTO_TRADING_MAX_ENTRY_PRICE_PREMIUM_PCT),
+      maxEntrySma20PremiumPct: optionalNumber(process.env.AUTO_TRADING_MAX_ENTRY_SMA20_PREMIUM_PCT),
+      maxEntryDayChangePct: optionalNumber(process.env.AUTO_TRADING_MAX_ENTRY_DAY_CHANGE_PCT),
+      minEntryRewardRiskRatio: optionalNumber(process.env.AUTO_TRADING_MIN_ENTRY_REWARD_RISK_RATIO),
+      neutralEntryScoreBuffer: optionalNumber(process.env.AUTO_TRADING_NEUTRAL_ENTRY_SCORE_BUFFER),
+      unstableSignalScoreBuffer: optionalNumber(process.env.AUTO_TRADING_UNSTABLE_SIGNAL_SCORE_BUFFER),
+      minEntryScoreChange: optionalNumber(process.env.AUTO_TRADING_MIN_ENTRY_SCORE_CHANGE),
+      minSignalStabilityAdjustment: optionalNumber(process.env.AUTO_TRADING_MIN_SIGNAL_STABILITY_ADJUSTMENT),
+      reducePositionPct: optionalNumber(process.env.AUTO_TRADING_REDUCE_POSITION_PCT),
+      allowAddToLosingPositions: optionalBoolean(process.env.AUTO_TRADING_ALLOW_ADD_TO_LOSING_POSITIONS),
+      allowPatternDayTraderBuys: optionalBoolean(process.env.AUTO_TRADING_ALLOW_PATTERN_DAY_TRADER_BUYS)
     }
   };
 }

@@ -2,10 +2,11 @@
 
 Alpaca API を使って、半導体・AI 関連銘柄のテクニカルシグナルと Alpaca 口座のポートフォリオ状況を確認する Next.js アプリです。
 
-このアプリは次の 2 つの画面を持ちます。
+このアプリは次の 3 つの主要タブを持ちます。
 
 - 銘柄シグナル: Alpaca Market Data から日足 OHLCV を取得し、主要半導体銘柄を `買い検討` / `監視継続` / `新規買い回避` に分類します。
 - ポートフォリオ: Alpaca Trading API から API キー発行元アカウントの口座サマリー、買付余力、保有ポジション、含み損益を表示します。
+- 自動売買: dry-run / paper の注文計画、ブロック理由、run 履歴を確認します。
 
 ## Features
 
@@ -44,6 +45,11 @@ Alpaca API を使って、半導体・AI 関連銘柄のテクニカルシグナ
   - 保有ポジション一覧
   - 含み損益と日中損益
   - 取引制限フラグ
+- 自動売買準備:
+  - dry-run の注文計画生成
+  - paper account への明示的な注文送信
+  - 未約定注文の再取得と重複発注防止
+  - kill switch、live mode 拒否、run 履歴、注文ログ
 
 ## Tech Stack
 
@@ -61,6 +67,8 @@ app/
   api/
     portfolio/route.ts       # Alpaca Trading API から口座・ポジション取得
     semiconductors/route.ts  # Alpaca Market Data から日足取得、分析実行
+    trading/run/route.ts     # dry-run / paper の自動売買ワークフロー
+    trading/runs/route.ts    # 自動売買 run 履歴
   page.tsx                   # アプリのトップページ
 components/
   technical-dashboard.tsx    # シグナル/ポートフォリオのタブ UI
@@ -73,9 +81,13 @@ lib/
     indicators.ts            # SMA / RSI / MACD / ATR などの指標計算
     normalization.ts         # 銘柄別パーセンタイル / Z スコア
     portfolio.ts             # Trading API クライアントとポートフォリオ整形
+    trading/                 # 意図分類、サイズ計算、risk check、paper 実行
     types.ts                 # 分析結果の型と対象銘柄
+scripts/
+  auto-trading-run.mjs       # cron / scheduler 向け runner
 docs/
   technical-logic.md         # 分析ロジックの詳細
+  auto-trade-server-settings.md # サーバー上の自動実行設定
   trading-intent-refinement.md # 売買意図の分類と実行ルール
 tests/
   *.test.ts                  # 指標計算と分析ロジックのテスト
@@ -138,6 +150,7 @@ http://localhost:3000
 npm run dev      # 開発サーバー
 npm test         # Vitest
 npm run build    # 本番ビルド
+npm run auto-trade # スケジュール実行向け runner
 ```
 
 環境によって Vitest が一時ディレクトリ作成で失敗する場合は、`TMPDIR` を明示してください。
@@ -172,6 +185,40 @@ Alpaca Trading API から次を取得します。
 
 返却データには、口座サマリー、ポジション一覧、エクスポージャー、含み損益集計が含まれます。
 
+### `POST /api/trading/run`
+
+半導体分析、ポートフォリオ、未約定注文を取得して、注文計画を作ります。`mode` は `dry-run` または `paper` を受け付けます。`live` は現時点では API と scheduler の両方で拒否します。
+
+`dry-run` は Alpaca に発注せず、`plans`、`orders`、`summary`、ブロック理由を返します。`paper` は `AUTO_TRADING_PAPER_ENABLED=true` が環境変数で設定されている場合だけ、`planned` の注文を Alpaca paper account に送信します。request body の `config.paperTradingEnabled` だけでは paper 発注を有効化できません。
+
+### `GET /api/trading/runs`
+
+`AUTO_TRADING_RUN_LOG_PATH` または `data/trading-runs.jsonl` から、直近の自動売買 run 履歴を返します。
+
+## Auto-Trading Readiness
+
+現在の実装は dry-run と paper trading までを対象にしています。実資金の live 発注は未対応です。
+
+実装済みの safety gate:
+
+- ライブラリ設定の既定 mode は `off`、API / scheduler の未指定実行は発注しない `dry-run`
+- `AUTO_TRADING_PAPER_ENABLED=true` がない限り paper 発注しない
+- `live` mode は `/api/trading/run` と `npm run auto-trade` の両方で拒否
+- Alpaca Trading client は明示的な `allowLive: true` なしに live URL へ注文送信しない
+- `AUTO_TRADING_KILL_SWITCH=true` で paper 提出を skip
+- paper 実行直前に open orders を再取得して重複注文を block
+- 注文は `limit` または `bracket` で作成し、`market buy` は生成しない
+- scheduler は同時実行 lock と米国市場休場日の簡易 guard を持つ
+- run 履歴と paper 注文ログを JSONL に保存できる。ただし保存失敗は notes に残す best-effort で、live 用の監査ログ保証ではない
+
+real-money-readiness の未達 criteria:
+
+- live 発注を有効化する前に、最低 20 営業日分の paper run 履歴をレビューする
+- live 用 API key、base URL、明示的な enable flag、1 run ごとの確認 token を分離する
+- live 注文前に dry-run と同一の注文計画を人間が確認できる UI または承認フローを用意する
+- 連続 API エラー、注文拒否、履歴保存失敗を検知して自動的に停止する運用ルールを決める
+- stop loss / take profit、partial fill、cancel / replace、短縮取引日を含む broker 実挙動を paper と手動 review で確認する
+
 ## Analysis Logic
 
 分析対象は 200 日移動平均を使うため、日足が 252 本未満の銘柄は除外します。
@@ -189,7 +236,7 @@ finalScore =
 
 このベーススコアに対して、銘柄自身の履歴に対する正規化指標と、QQQ / SMH へのファクター分析結果を小さく加減点します。調整だけで `BUY` 閾値をまたがないようにし、既存のテクニカル判定を補助する用途に限定しています。
 
-バックテスト用に `runSignalBacktest()` も用意しており、過去の分析時点ごとに 20 / 63 営業日先リターン、勝率、最大逆行、最大ドローダウンを Action やスコア帯別に集計できます。
+バックテスト用に `runSignalBacktest()` も用意しており、過去の分析時点ごとに 20 / 63 営業日先リターン、勝率、中央値リターン、profit factor、downside deviation、最大逆行、最大ドローダウンを Action やスコア帯別に集計できます。
 
 詳細は [docs/technical-logic.md](docs/technical-logic.md) を参照してください。
 
@@ -202,11 +249,27 @@ finalScore =
 | `ALPACA_DATA_FEED` | No | `iex` | Market Data の feed |
 | `ALPACA_DATA_BASE_URL` | No | `https://data.alpaca.markets` | Market Data API の base URL |
 | `ALPACA_TRADING_BASE_URL` | No | `https://paper-api.alpaca.markets` | Trading API の base URL |
+| `AUTO_TRADING_MODE` | No | `off` / API default `dry-run` | `off`、`dry-run`、`paper`、`live`。`live` は未対応 |
+| `AUTO_TRADING_PAPER_ENABLED` | No | `false` | `paper` mode の実発注許可 |
+| `AUTO_TRADING_KILL_SWITCH` | No | `false` | paper 提出を停止 |
+| `AUTO_TRADING_ALLOWED_SYMBOLS` | No | - | 自動売買対象 symbol の comma-separated allowlist |
+| `AUTO_TRADING_MIN_ENTRY_SCORE` | No | `70` | 新規買いの最低スコア |
+| `AUTO_TRADING_ADD_MIN_SCORE` | No | `72` | 追加買いの最低スコア |
+| `AUTO_TRADING_MIN_ENTRY_REWARD_RISK_RATIO` | No | `1.5` | エントリー時の最低 reward:risk |
+| `AUTO_TRADING_NEUTRAL_ENTRY_SCORE_BUFFER` | No | `5` | neutral regime で追加要求するスコア buffer |
+| `AUTO_TRADING_UNSTABLE_SIGNAL_SCORE_BUFFER` | No | `3` | 新規/反転 BUY に追加要求するスコア buffer |
+| `AUTO_TRADING_MAX_ENTRY_SMA20_PREMIUM_PCT` | No | `0.08` | 20日線からの最大上方乖離 |
+| `AUTO_TRADING_MAX_ENTRY_DAY_CHANGE_PCT` | No | `0.04` | エントリー許容する当日上昇率上限 |
+| `AUTO_TRADING_RUN_LOG_PATH` | No | `data/trading-runs.jsonl` | run 履歴 JSONL |
+| `AUTO_TRADING_LOG_PATH` | No | - | paper 注文ログ JSONL |
+| `AUTO_TRADING_API_URL` | No | `http://localhost:3000/api/trading/run` | scheduler が呼ぶ API URL |
+| `AUTO_TRADING_LOCK_PATH` | No | `data/auto-trading.lock` | scheduler の同時実行 lock |
 
 ## Notes
 
 - このアプリは投資判断を補助するテクニカル分析ツールであり、投資助言ではありません。
 - `BUY` は「買い検討」または「強気監視」であり、即時購入を指示するものではありません。
 - `SELL` は「新規買い回避」または「弱含み」であり、保有銘柄の即時売却を断定するものではありません。
+- 自動売買は現時点で dry-run と paper trading までです。live 発注は未対応で、実資金運用の前に上記 readiness criteria を満たす必要があります。
 - 実際の注文前に、決算、ニュース、流動性、スリッページ、税金、ポジションサイズ、リスク許容度を確認してください。
 - ポートフォリオタブには API キー発行元アカウントの情報が表示されます。共有環境では API キーの取り扱いに注意してください。

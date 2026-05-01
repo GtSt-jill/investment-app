@@ -44,11 +44,29 @@ const RATING_THRESHOLDS = {
   sell: 30
 } as const;
 
-const MARKET_REGIME_PENALTY = {
-  bullish: 0,
-  neutral: 0,
-  defensive: 8
-} satisfies Record<MarketRegime, number>;
+const MARKET_REGIME_RULES = {
+  bullish: {
+    penalty: 0,
+    buyThreshold: RATING_THRESHOLDS.buy,
+    label: "Bullish market regime"
+  },
+  neutral: {
+    penalty: 3,
+    buyThreshold: RATING_THRESHOLDS.buy + 3,
+    label: "Neutral market regime"
+  },
+  defensive: {
+    penalty: 10,
+    buyThreshold: RATING_THRESHOLDS.strongBuy,
+    label: "Defensive market regime"
+  }
+} satisfies Record<MarketRegime, { penalty: number; buyThreshold: number; label: string }>;
+
+const RELATIVE_STRENGTH_WEIGHTS = {
+  momentum20: 0.25,
+  momentum63: 0.45,
+  momentum126: 0.3
+} satisfies Record<"momentum20" | "momentum63" | "momentum126", number>;
 
 const RISK_THRESHOLDS = {
   elevatedAtrPct: 0.075,
@@ -87,11 +105,13 @@ export function analyzeSemiconductors(
       )
     )
     .filter((row): row is RecommendationItem => row !== null);
-  const analyzedSymbols = new Set(baseRows.map((row) => row.symbol));
+  const analysisAsOf = latestDate(baseRows);
+  const freshRows = analysisAsOf === "" ? baseRows : baseRows.filter((row) => row.asOf === analysisAsOf);
+  const analyzedSymbols = new Set(freshRows.map((row) => row.symbol));
   const excludedSymbols = universe.map((profile) => profile.symbol).filter((symbol) => !analyzedSymbols.has(symbol));
   const marketRegime = calculateMarketRegime(normalizedMarketBars);
 
-  const recommendations = applyRelativeStrengthScores(baseRows)
+  const recommendations = applyRelativeStrengthScores(freshRows)
     .map((row) => applyMarketRegimeFilter(row, marketRegime))
     .map((row) => applyEarningsRiskFilter(row, row.earningsDate, row.asOf))
     .sort((left, right) => right.score - left.score)
@@ -317,15 +337,34 @@ function calculateAdjustedScore(scoreBreakdown: ScoreBreakdown, adjustments: Sco
 }
 
 function applyRelativeStrengthScores(rows: RecommendationItem[]) {
-  const rankedByMomentum = [...rows].sort(
-    (left, right) => (right.indicators.momentum63 ?? -Infinity) - (left.indicators.momentum63 ?? -Infinity)
-  );
-  const rankBySymbol = new Map(rankedByMomentum.map((row, index) => [row.symbol, index + 1]));
   const size = Math.max(1, rows.length);
+  const horizonScores = buildRelativeStrengthHorizonScores(rows);
+  const compositeScores = new Map(
+    rows.map((row) => {
+      const symbolScores = horizonScores.get(row.symbol);
+      const relativeStrengthScore =
+        symbolScores === undefined
+          ? 50
+          : symbolScores.momentum20 * RELATIVE_STRENGTH_WEIGHTS.momentum20 +
+            symbolScores.momentum63 * RELATIVE_STRENGTH_WEIGHTS.momentum63 +
+            symbolScores.momentum126 * RELATIVE_STRENGTH_WEIGHTS.momentum126;
+
+      return [row.symbol, relativeStrengthScore];
+    })
+  );
+  const rankedByComposite = [...rows].sort((left, right) => {
+    const scoreDelta = (compositeScores.get(right.symbol) ?? 0) - (compositeScores.get(left.symbol) ?? 0);
+    if (scoreDelta !== 0) {
+      return scoreDelta;
+    }
+
+    return left.symbol.localeCompare(right.symbol);
+  });
+  const rankBySymbol = new Map(rankedByComposite.map((row, index) => [row.symbol, index + 1]));
 
   return rows.map((row) => {
     const relativeStrengthRank = rankBySymbol.get(row.symbol) ?? size;
-    const relativeStrengthScore = size === 1 ? 50 : ((size - relativeStrengthRank) / (size - 1)) * 100;
+    const relativeStrengthScore = size === 1 ? 50 : (compositeScores.get(row.symbol) ?? 50);
     const scoreBreakdown = {
       ...row.scoreBreakdown,
       relativeStrengthScore: Math.round(relativeStrengthScore)
@@ -356,24 +395,78 @@ function applyRelativeStrengthScores(rows: RecommendationItem[]) {
   });
 }
 
+function buildRelativeStrengthHorizonScores(rows: RecommendationItem[]) {
+  const scores = new Map<string, { momentum20: number; momentum63: number; momentum126: number }>();
+
+  for (const row of rows) {
+    scores.set(row.symbol, {
+      momentum20: 50,
+      momentum63: 50,
+      momentum126: 50
+    });
+  }
+
+  for (const horizon of Object.keys(RELATIVE_STRENGTH_WEIGHTS) as Array<keyof typeof RELATIVE_STRENGTH_WEIGHTS>) {
+    const ranked = [...rows].sort((left, right) => {
+      const leftMomentum = left.indicators[horizon] ?? -Infinity;
+      const rightMomentum = right.indicators[horizon] ?? -Infinity;
+      const momentumDelta = rightMomentum - leftMomentum;
+      if (momentumDelta !== 0) {
+        return momentumDelta;
+      }
+
+      return left.symbol.localeCompare(right.symbol);
+    });
+
+    const size = Math.max(1, ranked.length);
+    ranked.forEach((row, index) => {
+      const symbolScores = scores.get(row.symbol);
+      if (symbolScores === undefined) {
+        return;
+      }
+
+      symbolScores[horizon] = size === 1 ? 50 : ((size - index - 1) / (size - 1)) * 100;
+    });
+  }
+
+  return scores;
+}
+
 function applyMarketRegimeFilter(row: RecommendationItem, marketRegime: MarketRegime) {
-  const penalty = MARKET_REGIME_PENALTY[marketRegime];
-  if (penalty === 0) {
+  const rule = MARKET_REGIME_RULES[marketRegime];
+  if (rule.penalty === 0 && rule.buyThreshold === RATING_THRESHOLDS.buy) {
     return { ...row, marketRegime };
   }
 
-  const marketAdjustment: ScoreAdjustment = {
-    source: "market-regime",
-    label: "Defensive market regime",
-    value: -penalty
-  };
-  const scoreAdjustments = [...(row.scoreAdjustments ?? []), marketAdjustment];
-  const score = clamp(row.score - penalty, 0, 100);
+  const marketAdjustments: ScoreAdjustment[] = [];
+  let score = clamp(row.score - rule.penalty, 0, 100);
+
+  if (rule.penalty !== 0) {
+    marketAdjustments.push({
+      source: "market-regime",
+      label: rule.label,
+      value: -rule.penalty
+    });
+  }
+
+  if (score >= RATING_THRESHOLDS.buy && score < rule.buyThreshold) {
+    const thresholdPenalty = score - (RATING_THRESHOLDS.buy - 1);
+    score = RATING_THRESHOLDS.buy - 1;
+    marketAdjustments.push({
+      source: "market-regime",
+      label: `${rule.label} entry threshold`,
+      value: -thresholdPenalty
+    });
+  }
+
+  const scoreAdjustments = [...(row.scoreAdjustments ?? []), ...marketAdjustments];
   const rating = ratingFromScore(score);
   const action = actionFromRating(rating);
   const risks =
     marketRegime === "defensive"
       ? unique(["市場環境が守り寄りのため、新規エントリーは慎重に確認", ...row.risks]).slice(0, 4)
+      : marketRegime === "neutral"
+        ? unique(["市場環境が中立のため、買い判定にはより強い確認が必要", ...row.risks]).slice(0, 4)
       : row.risks;
 
   return {
@@ -395,12 +488,27 @@ export function applyEarningsRiskFilter(row: RecommendationItem, earningsDate?: 
 
   const action = row.action === "BUY" ? "HOLD" : row.action;
   const rating = row.action === "BUY" ? "WATCH" : row.rating;
+  const score = row.action === "BUY" ? Math.min(row.score, RATING_THRESHOLDS.buy - 1) : row.score;
+  const adjustmentValue = score - row.score;
+  const scoreAdjustments =
+    adjustmentValue === 0
+      ? row.scoreAdjustments
+      : [
+          ...(row.scoreAdjustments ?? []),
+          {
+            source: "earnings",
+            label: "Upcoming earnings blackout",
+            value: adjustmentValue
+          } satisfies ScoreAdjustment
+        ];
 
   return {
     ...row,
     earningsDate,
     action,
     rating,
+    score,
+    scoreAdjustments,
     signalChange: calculateSignalChange(row.previousAction, action),
     risks: unique(["決算前のため新規エントリー注意", ...row.risks]).slice(0, 4)
   };
@@ -427,8 +535,10 @@ export function defensiveStopLoss(currentPrice: number, atr: number | null, sma5
   const resolvedAtr = atr ?? currentPrice * 0.04;
   const atrLine = currentPrice - resolvedAtr * 2.2;
   const smaLine = sma50 === null ? atrLine : sma50 * 0.96;
+  const stopCandidates = [atrLine, smaLine].filter((value) => value < currentPrice);
+  const rawStop = stopCandidates.length === 0 ? currentPrice - resolvedAtr * 2.2 : Math.max(...stopCandidates);
 
-  return Math.max(0.01, Math.max(atrLine, smaLine));
+  return Math.max(0.01, rawStop);
 }
 
 export function calculateSignalChange(previousAction: SignalAction | undefined, currentAction: SignalAction): SignalChange {

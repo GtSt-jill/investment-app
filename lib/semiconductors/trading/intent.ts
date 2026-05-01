@@ -158,8 +158,11 @@ function evaluateBuySignal(
   const stopLoss = validPositivePrice(recommendation.buyZone.stopLoss);
   const takeProfit = validPositivePrice(recommendation.buyZone.takeProfit);
   const idealEntry = validPositivePrice(recommendation.buyZone.idealEntry);
+  const sma20 = validPositivePrice(recommendation.indicators.sma20);
+  const marketRegime = recommendation.marketRegime ?? analysis.summary.marketRegime;
+  const entryScoreThreshold = position === null ? config.risk.minEntryScore : config.risk.addMinScore;
 
-  if (recommendation.score < (position === null ? config.risk.minEntryScore : config.risk.addMinScore)) {
+  if (recommendation.score < entryScoreThreshold) {
     reasons.push(
       blockReason(
         "signal",
@@ -173,8 +176,56 @@ function evaluateBuySignal(
     reasons.push(blockReason("signal", "RATING_NOT_BUY", `${recommendation.symbol} rating is ${recommendation.rating}.`));
   }
 
-  if ((recommendation.marketRegime ?? analysis.summary.marketRegime) === "defensive") {
+  if (marketRegime === "defensive") {
     reasons.push(blockReason("signal", "DEFENSIVE_MARKET_REGIME", "New and add-on buys are blocked in a defensive market regime."));
+  }
+
+  if (
+    marketRegime === "neutral" &&
+    recommendation.score < entryScoreThreshold + config.risk.neutralEntryScoreBuffer
+  ) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "NEUTRAL_REGIME_SCORE_BUFFER_NOT_MET",
+        `${recommendation.symbol} score must clear an additional ${config.risk.neutralEntryScoreBuffer} point buffer in a neutral market regime.`
+      )
+    );
+  }
+
+  if (
+    isUnstableBuySignal(recommendation.signalChange) &&
+    recommendation.score < entryScoreThreshold + config.risk.unstableSignalScoreBuffer
+  ) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "UNSTABLE_BUY_SIGNAL_SCORE_BUFFER_NOT_MET",
+        `${recommendation.symbol} ${recommendation.signalChange} signal must clear an additional ${config.risk.unstableSignalScoreBuffer} point buffer.`
+      )
+    );
+  }
+
+  const scoreChange = readOptionalNumber(recommendation, ["scoreChange", "scoreDelta", "scoreChangePct", "scoreDeltaPct"]);
+  if (scoreChange !== null && scoreChange < config.risk.minEntryScoreChange) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "ENTRY_SCORE_DETERIORATING",
+        `${recommendation.symbol} score change ${formatSigned(scoreChange)} is below the configured minimum ${formatSigned(config.risk.minEntryScoreChange)}.`
+      )
+    );
+  }
+
+  const signalStabilityAdjustment = signalStabilityAdjustmentValue(recommendation);
+  if (signalStabilityAdjustment !== null && signalStabilityAdjustment < config.risk.minSignalStabilityAdjustment) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "SIGNAL_STABILITY_ADJUSTMENT_TOO_LOW",
+        `${recommendation.symbol} signal stability adjustment ${formatSigned(signalStabilityAdjustment)} is below the configured minimum ${formatSigned(config.risk.minSignalStabilityAdjustment)}.`
+      )
+    );
   }
 
   if (recommendation.relativeStrengthRank <= 0 || recommendation.relativeStrengthRank > relativeStrengthCutoff) {
@@ -197,12 +248,43 @@ function evaluateBuySignal(
     );
   }
 
+  const rewardRiskRatio = calculateRewardRiskRatio(currentPrice, stopLoss, takeProfit);
+  if (rewardRiskRatio === null || rewardRiskRatio < config.risk.minEntryRewardRiskRatio) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "ENTRY_REWARD_RISK_TOO_LOW",
+        `${recommendation.symbol} entry reward:risk must be at least ${config.risk.minEntryRewardRiskRatio.toFixed(2)}.`
+      )
+    );
+  }
+
   if (idealEntry !== null && currentPrice > idealEntry * (1 + config.risk.maxEntryPricePremiumPct)) {
     reasons.push(
       blockReason(
         "signal",
         "ENTRY_PRICE_EXTENDED",
         `${recommendation.symbol} price is more than ${formatPct(config.risk.maxEntryPricePremiumPct)} above ideal entry.`
+      )
+    );
+  }
+
+  if (sma20 !== null && currentPrice > sma20 * (1 + config.risk.maxEntrySma20PremiumPct)) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "ENTRY_PRICE_EXTENDED_VS_SMA20",
+        `${recommendation.symbol} price is more than ${formatPct(config.risk.maxEntrySma20PremiumPct)} above the 20-day moving average.`
+      )
+    );
+  }
+
+  if (recommendation.indicators.dayChangePct > config.risk.maxEntryDayChangePct) {
+    reasons.push(
+      blockReason(
+        "signal",
+        "ENTRY_DAY_MOVE_EXTENDED",
+        `${recommendation.symbol} day move is above the configured entry limit ${formatPct(config.risk.maxEntryDayChangePct)}.`
       )
     );
   }
@@ -434,6 +516,41 @@ function validPositivePrice(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function calculateRewardRiskRatio(entryPrice: number, stopLoss: number | null, takeProfit: number | null) {
+  if (stopLoss === null || takeProfit === null || entryPrice <= stopLoss || entryPrice >= takeProfit) {
+    return null;
+  }
+
+  const risk = entryPrice - stopLoss;
+  const reward = takeProfit - entryPrice;
+  return risk > 0 ? reward / risk : null;
+}
+
+function isUnstableBuySignal(signalChange: RecommendationItem["signalChange"]) {
+  return signalChange === "NEW_BUY" || signalChange === "HOLD_TO_BUY";
+}
+
+function readOptionalNumber(source: unknown, keys: string[]) {
+  if (typeof source !== "object" || source === null) {
+    return null;
+  }
+
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function signalStabilityAdjustmentValue(recommendation: RecommendationItem) {
+  const adjustment = recommendation.scoreAdjustments?.find((item) => item.source === "signal-stability");
+  return adjustment !== undefined && Number.isFinite(adjustment.value) ? adjustment.value : null;
+}
+
 function isActiveOpenOrder(order: OpenOrderSnapshot) {
   const status = order.status?.toLowerCase();
   return status === undefined || ["new", "accepted", "pending_new", "partially_filled", "held", "open"].includes(status);
@@ -469,4 +586,8 @@ function intentPriority(intent: TradeIntent) {
 
 function formatPct(value: number) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatSigned(value: number) {
+  return value > 0 ? `+${value}` : `${value}`;
 }

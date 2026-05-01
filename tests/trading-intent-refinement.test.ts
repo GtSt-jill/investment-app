@@ -145,6 +145,58 @@ describe("trading intent refinement semantics", () => {
     });
   });
 
+  it("blocks entries with weak reward:risk or extended price action", () => {
+    const candidates = intents({
+      recommendations: [
+        recommendation({
+          symbol: "CHASE",
+          action: "BUY",
+          rating: "BUY",
+          score: 82,
+          close: 100,
+          stopLoss: 95,
+          takeProfit: 103,
+          idealEntry: 94,
+          sma20: 92,
+          dayChangePct: 0.055
+        })
+      ],
+      portfolio: portfolio({ positions: [] })
+    });
+    const codes = blockCodes(candidateFor(candidates, "CHASE"));
+
+    expect(codes).toContain("ENTRY_REWARD_RISK_TOO_LOW");
+    expect(codes).toContain("ENTRY_PRICE_EXTENDED");
+    expect(codes).toContain("ENTRY_PRICE_EXTENDED_VS_SMA20");
+    expect(codes).toContain("ENTRY_DAY_MOVE_EXTENDED");
+  });
+
+  it("uses regime, signal stability, and score-change metadata as stricter entry gates when present", () => {
+    const candidates = intents({
+      recommendations: [
+        recommendation({ symbol: "FRESH", action: "BUY", rating: "BUY", score: 72, close: 100, stopLoss: 95, signalChange: "NEW_BUY" }),
+        recommendation({ symbol: "NEUTRAL", action: "BUY", rating: "BUY", score: 74, close: 100, stopLoss: 95, signalChange: "BUY_CONTINUATION", marketRegime: "neutral" }),
+        recommendation({ symbol: "FADE", action: "BUY", rating: "BUY", score: 78, close: 100, stopLoss: 95, signalChange: "BUY_CONTINUATION", scoreChange: -1 }),
+        recommendation({
+          symbol: "CHURN",
+          action: "BUY",
+          rating: "BUY",
+          score: 78,
+          close: 100,
+          stopLoss: 95,
+          signalChange: "BUY_CONTINUATION",
+          signalStabilityAdjustment: -2
+        })
+      ],
+      portfolio: portfolio({ positions: [] })
+    });
+
+    expect(blockCodes(candidateFor(candidates, "FRESH"))).toContain("UNSTABLE_BUY_SIGNAL_SCORE_BUFFER_NOT_MET");
+    expect(blockCodes(candidateFor(candidates, "NEUTRAL"))).toContain("NEUTRAL_REGIME_SCORE_BUFFER_NOT_MET");
+    expect(blockCodes(candidateFor(candidates, "FADE"))).toContain("ENTRY_SCORE_DETERIORATING");
+    expect(blockCodes(candidateFor(candidates, "CHURN"))).toContain("SIGNAL_STABILITY_ADJUSTMENT_TOO_LOW");
+  });
+
   it("documents reduce versus exit sizing through the dry-run public API", () => {
     const result = createTradingDryRun({
       mode: "dry-run",
@@ -255,15 +307,23 @@ function recommendation(input: {
   score: number;
   close: number;
   stopLoss: number;
+  takeProfit?: number;
+  idealEntry?: number;
+  sma20?: number;
+  dayChangePct?: number;
+  signalChange?: RecommendationItem["signalChange"];
+  scoreChange?: number;
+  signalStabilityAdjustment?: number;
+  marketRegime?: RecommendationItem["marketRegime"];
 }): RecommendationItem {
-  return {
+  const item: RecommendationItem = {
     symbol: input.symbol,
     name: input.symbol,
     segment: "Semiconductor Watchlist",
     asOf: "2026-04-24",
     rating: input.rating,
     action: input.action,
-    signalChange: input.action === "BUY" ? "NEW_BUY" : input.action === "SELL" ? "NEW_SELL" : "NO_CHANGE",
+    signalChange: input.signalChange ?? (input.action === "BUY" ? "NEW_BUY" : input.action === "SELL" ? "NEW_SELL" : "NO_CHANGE"),
     score: input.score,
     scoreBreakdown: {
       trendScore: input.score,
@@ -274,12 +334,16 @@ function recommendation(input: {
     },
     rank: 1,
     relativeStrengthRank: 1,
-    marketRegime: "bullish",
+    marketRegime: input.marketRegime ?? "bullish",
+    scoreAdjustments:
+      input.signalStabilityAdjustment === undefined
+        ? undefined
+        : [{ source: "signal-stability", label: "Signal stability", value: input.signalStabilityAdjustment }],
     indicators: {
       close: input.close,
       previousClose: input.close * 0.99,
-      dayChangePct: 0.01,
-      sma20: input.close * 0.98,
+      dayChangePct: input.dayChangePct ?? 0.01,
+      sma20: input.sma20 ?? input.close * 0.98,
       sma50: input.close * 0.95,
       sma200: input.close * 0.9,
       rsi14: 58,
@@ -304,10 +368,10 @@ function recommendation(input: {
     reasons: ["Fixture recommendation for trading intent refinement tests"],
     risks: [],
     buyZone: {
-      idealEntry: input.close,
+      idealEntry: input.idealEntry ?? input.close,
       pullbackEntry: input.close * 0.98,
       stopLoss: input.stopLoss,
-      takeProfit: input.close * 1.18
+      takeProfit: input.takeProfit ?? input.close * 1.18
     },
     chart: [
       {
@@ -322,6 +386,12 @@ function recommendation(input: {
       }
     ]
   };
+
+  if (input.scoreChange !== undefined) {
+    item.scoreChange = input.scoreChange;
+  }
+
+  return item;
 }
 
 function position(input: {

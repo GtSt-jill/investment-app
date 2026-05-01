@@ -173,6 +173,7 @@ export interface RecommendationItem {
   previousAction?: SignalAction;
   signalChange: SignalChange;
   score: number;
+  scoreChange?: number;
   scoreBreakdown: ScoreBreakdown;
   scoreAdjustments?: ScoreAdjustment[];
   rank: number;
