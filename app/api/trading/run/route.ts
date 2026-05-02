@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { analyzeMarketUniverse } from "@/lib/semiconductors/analyzer";
-import { fetchDailyBars } from "@/lib/semiconductors/alpaca";
+import { runMarketAnalysis } from "@/lib/semiconductors/analysis-service";
 import { fetchPortfolioSnapshot } from "@/lib/semiconductors/portfolio";
-import { DEFAULT_MARKET_UNIVERSE } from "@/lib/semiconductors/types";
 import {
   appendTradeOrderLogs,
   createTradingRun,
@@ -62,18 +60,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Paper trading is disabled. Set AUTO_TRADING_PAPER_ENABLED=true." }, { status: 400 });
     }
 
-    const symbols = coerceSymbols(payload.symbols);
-    const lookbackDays = coerceLookbackDays(payload.lookbackDays);
-    const universe = DEFAULT_MARKET_UNIVERSE.filter((profile) => symbols.includes(profile.symbol));
-    const marketSymbols = ["SMH", "QQQ"];
-    const fetchSymbols = Array.from(new Set([...symbols, ...marketSymbols]));
-    const [barsBySymbol, portfolio] = await Promise.all([fetchDailyBars(fetchSymbols, lookbackDays), fetchPortfolioSnapshot()]);
-    const analysis = analyzeMarketUniverse(barsBySymbol, universe, {
-      marketBars: {
-        semiconductor: barsBySymbol.SMH,
-        qqq: barsBySymbol.QQQ
-      }
-    });
+    const [analysisExecution, portfolio] = await Promise.all([
+      runMarketAnalysis({
+        symbols: payload.symbols,
+        lookbackDays: payload.lookbackDays
+      }),
+      fetchPortfolioSnapshot()
+    ]);
+    const analysis = analysisExecution.result;
     const openOrders = mode === "paper" ? await fetchOpenAlpacaOrders() : coerceOpenOrders(payload.openOrders);
     const result = await createTradingRun({
       mode,
@@ -116,28 +110,6 @@ function coerceMode(value: unknown) {
   }
 
   throw new Error("Invalid trading mode.");
-}
-
-function coerceSymbols(value: unknown) {
-  const allowed = new Set<string>(DEFAULT_MARKET_UNIVERSE.map((profile) => profile.symbol));
-  if (!Array.isArray(value)) {
-    return Array.from(allowed);
-  }
-
-  const symbols = value
-    .filter((symbol): symbol is string => typeof symbol === "string")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter((symbol) => allowed.has(symbol));
-
-  return symbols.length > 0 ? Array.from(new Set(symbols)) : Array.from(allowed);
-}
-
-function coerceLookbackDays(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 520;
-  }
-
-  return Math.min(900, Math.max(260, Math.round(value)));
 }
 
 function coerceOpenOrders(value: unknown): OpenOrderSnapshot[] {

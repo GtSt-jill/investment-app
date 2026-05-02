@@ -86,6 +86,7 @@ lib/
     types.ts                 # 分析結果の型、カテゴリ、対象銘柄
 scripts/
   auto-trading-run.mjs       # cron / scheduler 向け runner
+  save-analysis-snapshot.mjs # 分析 snapshot 保存用 scheduler runner
 docs/
   technical-logic.md         # 分析ロジックの詳細
   auto-trade-server-settings.md # サーバー上の自動実行設定
@@ -166,7 +167,8 @@ http://localhost:3000
 npm run dev      # 開発サーバー
 npm test         # Vitest
 npm run build    # 本番ビルド
-npm run auto-trade # スケジュール実行向け runner
+npm run auto-trade # 自動売買のスケジュール実行向け runner
+npm run save-analysis-snapshot # 分析 snapshot の日次保存 runner
 ```
 
 環境によって Vitest が一時ディレクトリ作成で失敗する場合は、`TMPDIR` を明示してください。
@@ -212,6 +214,22 @@ Alpaca Trading API から次を取得します。
 ### `GET /api/trading/runs`
 
 `AUTO_TRADING_RUN_LOG_PATH` または `data/trading-runs.jsonl` から、直近の自動売買 run 履歴と paper run readiness を返します。
+
+### `POST /api/analysis/snapshots`
+
+カテゴリ別ウォッチリストの分析結果を履歴 snapshot として保存します。日次保存には `npm run save-analysis-snapshot` を使います。
+
+runner は既定で `http://localhost:3000/api/analysis/snapshots` に次の body を送ります。
+
+```json
+{
+  "source": "scheduled",
+  "lookbackDays": 520,
+  "force": false
+}
+```
+
+`ANALYSIS_HISTORY_SCHEDULE_SYMBOLS` を指定すると対象銘柄を絞り、`ANALYSIS_HISTORY_LOOKBACK_DAYS` で lookback を変更できます。`ANALYSIS_HISTORY_LOCK_PATH` による同時実行 lock と、米国市場の土日・主要休場日を避ける簡易 guard を持ちます。
 
 ## Auto-Trading Readiness
 

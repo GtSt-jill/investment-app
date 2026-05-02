@@ -185,7 +185,46 @@ tail -n 20 /opt/investment-app/data/trading-runs.jsonl
 tail -n 20 /opt/investment-app/data/trading-orders.jsonl
 ```
 
-## 8. 停止方法
+## 8. 分析 snapshot を日次保存する
+
+`POST /api/analysis/snapshots` が有効な環境では、同じ Next.js service に対して `yarn save-analysis-snapshot` を cron から実行できます。runner は `source: "scheduled"` で保存 API を呼び、同時実行 lock と米国市場の土日・主要休場日 guard を使います。
+
+手動確認:
+
+```bash
+cd /opt/investment-app
+
+export ANALYSIS_HISTORY_API_URL="http://localhost:3000/api/analysis/snapshots"
+export ANALYSIS_HISTORY_LOCK_PATH="/opt/investment-app/data/analysis-history.lock"
+export ANALYSIS_HISTORY_LOOKBACK_DAYS="520"
+
+yarn save-analysis-snapshot
+```
+
+成功時の出力例:
+
+```json
+{"status":"completed","snapshotId":"analysis_xxx","asOf":"2026-05-01","created":true,"revision":1,"symbolCount":123}
+```
+
+cron 例:
+
+```cron
+# 米国市場 close 後に 1 日 1 回保存する。サーバー時刻に合わせて調整する。
+30 7 * * 2-6 cd /opt/investment-app && /usr/bin/env ANALYSIS_HISTORY_API_URL=http://localhost:3000/api/analysis/snapshots ANALYSIS_HISTORY_LOCK_PATH=/opt/investment-app/data/analysis-history.lock ANALYSIS_HISTORY_LOOKBACK_DAYS=520 yarn save-analysis-snapshot >> /opt/investment-app/logs/analysis-history.log 2>&1
+```
+
+主な環境変数:
+
+- `ANALYSIS_HISTORY_API_URL`: 既定 `http://localhost:3000/api/analysis/snapshots`
+- `ANALYSIS_HISTORY_SCHEDULE_SYMBOLS`: カンマ区切り。未指定なら API 側の既定ユニバース
+- `ANALYSIS_HISTORY_LOOKBACK_DAYS`: 既定 `520`
+- `ANALYSIS_HISTORY_FORCE`: `true` の場合は同一 snapshot key を上書きする
+- `ANALYSIS_HISTORY_LOCK_PATH`: 既定 `data/analysis-history.lock`
+- `ANALYSIS_HISTORY_LOCK_TTL_MS`: 既定 `2700000`
+- `ANALYSIS_HISTORY_SKIP_MARKET_CLOSED`: `false` の場合だけ市場休場 guard を無効化
+
+## 9. 停止方法
 
 自動実行を止めるだけなら cron を削除するか、`AUTO_TRADING_MODE=off` にします。
 
@@ -201,7 +240,7 @@ systemd 側で止める場合:
 sudo systemctl stop investment-app
 ```
 
-## 9. 注意点
+## 10. 注意点
 
 - `AUTO_TRADING_MODE=paper` だけでは発注されません。`AUTO_TRADING_PAPER_ENABLED=true` も必要です。
 - `ALPACA_TRADING_BASE_URL` は paper では必ず `https://paper-api.alpaca.markets` にします。

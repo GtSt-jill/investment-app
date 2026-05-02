@@ -37,6 +37,7 @@ import type {
 type CategoryFilter = "all" | SecurityCategoryId;
 type ChartRange = "1D" | "1W" | "1M" | "3M" | "6M";
 type ChartScale = "linear" | "log";
+type AnalysisSnapshotSource = "scheduled" | "manual" | "trading-run";
 
 const chartRanges: Array<{ id: ChartRange; label: string; points: number }> = [
   { id: "1D", label: "1day", points: 1 },
@@ -85,6 +86,29 @@ interface TradingReadinessPayload {
   paper: PaperTradingReadiness;
 }
 
+interface AnalysisSnapshotListItem {
+  id: string;
+  snapshotKey: string;
+  asOf: string;
+  generatedAt: string;
+  savedAt: string;
+  updatedAt: string;
+  revision: number;
+  lookbackDays: number;
+  analyzerVersion: string;
+  universeHash: string;
+  symbolCount: number;
+  symbols: string[];
+  summary: MarketAnalysisResult["summary"];
+  source: AnalysisSnapshotSource;
+  notes: string[];
+}
+
+interface AnalysisSnapshotPayload {
+  snapshot: AnalysisSnapshotListItem;
+  result: MarketAnalysisResult;
+}
+
 export function TechnicalDashboard() {
   const [activeTab, setActiveTab] = useState<"signals" | "portfolio" | "trading">("signals");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
@@ -102,13 +126,19 @@ export function TechnicalDashboard() {
   const [tradingReadiness, setTradingReadiness] = useState<TradingReadinessPayload | null>(null);
   const [tradingRiskProfile, setTradingRiskProfile] = useState<TradingRiskProfile>("balanced");
   const [tradingError, setTradingError] = useState<string | null>(null);
+  const [analysisSnapshots, setAnalysisSnapshots] = useState<AnalysisSnapshotListItem[]>([]);
+  const [activeSnapshot, setActiveSnapshot] = useState<AnalysisSnapshotListItem | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isPortfolioPending, startPortfolioTransition] = useTransition();
   const [isTradingPending, startTradingTransition] = useTransition();
   const [isTradingHistoryPending, startTradingHistoryTransition] = useTransition();
+  const [isSnapshotHistoryPending, startSnapshotHistoryTransition] = useTransition();
+  const [isSnapshotActionPending, startSnapshotActionTransition] = useTransition();
 
   useEffect(() => {
     runAnalysis();
+    loadAnalysisSnapshots();
     // Initial load only. Manual refresh uses the current controls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -210,7 +240,65 @@ export function TechnicalDashboard() {
 
       const analysis = payload as MarketAnalysisResult;
       setResult(analysis);
+      setActiveSnapshot(null);
       setSelectedSymbol((current) => analysis.recommendations.find((row) => row.symbol === current)?.symbol ?? analysis.recommendations[0]?.symbol ?? current);
+    });
+  }
+
+  function loadAnalysisSnapshots() {
+    setSnapshotError(null);
+    startSnapshotHistoryTransition(async () => {
+      const response = await fetch("/api/analysis/snapshots?limit=12");
+      const payload = (await response.json()) as { snapshots?: AnalysisSnapshotListItem[]; error?: string };
+      if (!response.ok) {
+        setSnapshotError(payload.error ?? "分析履歴の取得に失敗しました。");
+        return;
+      }
+
+      setAnalysisSnapshots(payload.snapshots ?? []);
+    });
+  }
+
+  function saveAnalysisSnapshot() {
+    setSnapshotError(null);
+    startSnapshotActionTransition(async () => {
+      const response = await fetch("/api/analysis/snapshots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: selectedSymbols, lookbackDays, source: "manual" })
+      });
+      const payload = (await response.json()) as (AnalysisSnapshotPayload & { created?: boolean; updated?: boolean }) | { error?: string };
+      if (!response.ok) {
+        setSnapshotError("error" in payload && payload.error ? payload.error : "分析スナップショットの保存に失敗しました。");
+        return;
+      }
+
+      const saved = payload as AnalysisSnapshotPayload & { created?: boolean; updated?: boolean };
+      setResult(saved.result);
+      setActiveSnapshot(saved.snapshot);
+      setSelectedSymbols(saved.snapshot.symbols.length > 0 ? saved.snapshot.symbols : saved.result.universe.map((profile) => profile.symbol));
+      setLookbackDays(saved.snapshot.lookbackDays);
+      setSelectedSymbol((current) => saved.result.recommendations.find((row) => row.symbol === current)?.symbol ?? saved.result.recommendations[0]?.symbol ?? current);
+      loadAnalysisSnapshots();
+    });
+  }
+
+  function loadAnalysisSnapshot(snapshotId: string) {
+    setSnapshotError(null);
+    startSnapshotActionTransition(async () => {
+      const response = await fetch(`/api/analysis/snapshots/${encodeURIComponent(snapshotId)}`);
+      const payload = (await response.json()) as AnalysisSnapshotPayload | { error?: string };
+      if (!response.ok) {
+        setSnapshotError("error" in payload && payload.error ? payload.error : "分析スナップショットの読み込みに失敗しました。");
+        return;
+      }
+
+      const loaded = payload as AnalysisSnapshotPayload;
+      setResult(loaded.result);
+      setActiveSnapshot(loaded.snapshot);
+      setSelectedSymbols(loaded.snapshot.symbols.length > 0 ? loaded.snapshot.symbols : loaded.result.universe.map((profile) => profile.symbol));
+      setLookbackDays(loaded.snapshot.lookbackDays);
+      setSelectedSymbol((current) => loaded.result.recommendations.find((row) => row.symbol === current)?.symbol ?? loaded.result.recommendations[0]?.symbol ?? current);
     });
   }
 
@@ -302,6 +390,7 @@ export function TechnicalDashboard() {
           <div className="control-status-row">
             <span className="status-pill">{categoryFilterLabel(activeCategory)}</span>
             <span className="status-pill">{selectedSymbols.length} / {DEFAULT_MARKET_UNIVERSE.length}</span>
+            {activeSnapshot ? <span className="status-pill historical">履歴 {activeSnapshot.asOf}</span> : null}
             <span className={`status-pill ${isPending ? "pending" : ""}`}>{isPending ? "取得中" : "準備完了"}</span>
           </div>
         </div>
@@ -325,8 +414,14 @@ export function TechnicalDashboard() {
             <button type="button" className="secondary-button" onClick={() => setIsUniverseOpen((current) => !current)}>
               {isUniverseOpen ? "銘柄選択を閉じる" : "銘柄を編集"}
             </button>
+            <button type="button" className="secondary-button" onClick={loadAnalysisSnapshots} disabled={isSnapshotHistoryPending}>
+              {isSnapshotHistoryPending ? "履歴取得中" : "履歴更新"}
+            </button>
             <button type="button" className="primary-button" onClick={runAnalysis} disabled={isPending}>
               分析を更新
+            </button>
+            <button type="button" className="primary-button snapshot-save-button" onClick={saveAnalysisSnapshot} disabled={isPending || isSnapshotActionPending}>
+              {isSnapshotActionPending ? "処理中" : "履歴に保存"}
             </button>
           </div>
         </div>
@@ -380,6 +475,7 @@ export function TechnicalDashboard() {
         ) : null}
 
         {error ? <p className="error-message">{error}</p> : null}
+        {snapshotError ? <p className="error-message">{snapshotError}</p> : null}
       </section>
 
       <section className="summary-grid">
@@ -388,6 +484,15 @@ export function TechnicalDashboard() {
         <SummaryCard label="平均スコア" value={formatNumber(activeAverageScore, 1)} />
         <SummaryCard label="地合い" value={marketBiasLabel(result?.summary.marketBias)} />
       </section>
+
+      <AnalysisSnapshotHistoryPanel
+        snapshots={analysisSnapshots}
+        activeSnapshot={activeSnapshot}
+        isHistoryPending={isSnapshotHistoryPending}
+        isActionPending={isSnapshotActionPending}
+        onRefresh={loadAnalysisSnapshots}
+        onLoad={loadAnalysisSnapshot}
+      />
 
       {activeRecommendations.length ? (
         <PriceBoard rows={activeRecommendations.slice(0, 28)} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} totalRows={activeRecommendations.length} />
@@ -536,6 +641,87 @@ export function TechnicalDashboard() {
         />
       )}
     </div>
+  );
+}
+
+function AnalysisSnapshotHistoryPanel({
+  snapshots,
+  activeSnapshot,
+  isHistoryPending,
+  isActionPending,
+  onRefresh,
+  onLoad
+}: {
+  snapshots: AnalysisSnapshotListItem[];
+  activeSnapshot: AnalysisSnapshotListItem | null;
+  isHistoryPending: boolean;
+  isActionPending: boolean;
+  onRefresh: () => void;
+  onLoad: (snapshotId: string) => void;
+}) {
+  return (
+    <section className="panel table-panel snapshot-history-panel">
+      <div className="panel-header compact-header">
+        <div>
+          <p className="panel-eyebrow">Snapshot History</p>
+          <h2>分析履歴</h2>
+        </div>
+        <div className="snapshot-history-actions">
+          {activeSnapshot ? (
+            <span className="muted-copy">
+              表示中: {activeSnapshot.asOf} / rev {activeSnapshot.revision}
+            </span>
+          ) : (
+            <span className="muted-copy">現在の分析結果を表示中</span>
+          )}
+          <button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={isHistoryPending}>
+            {isHistoryPending ? "取得中" : "更新"}
+          </button>
+        </div>
+      </div>
+
+      {snapshots.length === 0 ? (
+        <p className="muted-copy">保存された分析スナップショットはまだありません。</p>
+      ) : (
+        <div className="table-wrap compact-table-wrap">
+          <table className="snapshot-table">
+            <thead>
+              <tr>
+                <th>As Of</th>
+                <th>Saved</th>
+                <th>Source</th>
+                <th>Symbols</th>
+                <th>Bias</th>
+                <th>Avg</th>
+                <th>Rev</th>
+                <th>Load</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshots.map((snapshot) => (
+                <tr key={snapshot.id} className={snapshot.id === activeSnapshot?.id ? "selected-row" : ""}>
+                  <td>
+                    <strong>{snapshot.asOf}</strong>
+                    <span className="table-subtext">{snapshot.lookbackDays} days</span>
+                  </td>
+                  <td>{formatOptionalDateTime(snapshot.savedAt)}</td>
+                  <td>{analysisSnapshotSourceLabel(snapshot.source)}</td>
+                  <td>{snapshot.symbolCount}</td>
+                  <td>{marketBiasLabel(snapshot.summary.marketBias)}</td>
+                  <td>{formatNumber(snapshot.summary.averageScore, 1)}</td>
+                  <td>{snapshot.revision}</td>
+                  <td>
+                    <button type="button" className="secondary-button compact-button" onClick={() => onLoad(snapshot.id)} disabled={isActionPending}>
+                      読込
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1903,6 +2089,16 @@ function categoryFilterLabel(category: CategoryFilter) {
   }
 
   return SECURITY_CATEGORIES.find((item) => item.id === category)?.label ?? category;
+}
+
+function analysisSnapshotSourceLabel(source: AnalysisSnapshotSource) {
+  const labels: Record<AnalysisSnapshotSource, string> = {
+    manual: "手動",
+    scheduled: "定期",
+    "trading-run": "売買"
+  };
+
+  return labels[source];
 }
 
 function formatNullable(value: number | null) {
