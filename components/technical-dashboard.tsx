@@ -1,6 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type MouseEvent } from "react";
+import {
+  CandlestickSeries,
+  ColorType,
+  CrosshairMode,
+  HistogramSeries,
+  LineSeries,
+  PriceScaleMode,
+  createChart,
+  type CandlestickData,
+  type HistogramData,
+  type LineData,
+  type Time
+} from "lightweight-charts";
 
 import { formatNumber, formatPercent, formatPrice } from "@/lib/format";
 import type { PortfolioSnapshot } from "@/lib/semiconductors/portfolio";
@@ -22,6 +35,16 @@ import type {
 } from "@/lib/semiconductors/trading";
 
 type CategoryFilter = "all" | SecurityCategoryId;
+type ChartRange = "1D" | "1W" | "1M" | "3M" | "6M";
+type ChartScale = "linear" | "log";
+
+const chartRanges: Array<{ id: ChartRange; label: string; points: number }> = [
+  { id: "1D", label: "1day", points: 1 },
+  { id: "1W", label: "1week", points: 5 },
+  { id: "1M", label: "1M", points: 22 },
+  { id: "3M", label: "3M", points: 66 },
+  { id: "6M", label: "6M", points: 132 }
+];
 
 const ratingLabels: Record<RecommendationItem["rating"], string> = {
   STRONG_BUY: "強気監視",
@@ -880,6 +903,17 @@ function PortfolioDashboard({
   const account = snapshot?.account;
   const positions = snapshot?.positions ?? [];
   const openOrders = snapshot?.openOrders ?? [];
+  const portfolioValue = account?.portfolioValue ?? 0;
+  const topPositions = positions.slice(0, 6);
+  const sortedByPnl = [...positions].sort((left, right) => right.unrealizedPnl - left.unrealizedPnl);
+  const winners = sortedByPnl.filter((position) => position.unrealizedPnl > 0).slice(0, 3);
+  const losers = sortedByPnl.filter((position) => position.unrealizedPnl < 0).slice(-3).reverse();
+  const topFiveAllocation = positions.slice(0, 5).reduce((total, position) => total + Math.abs(position.allocationPct ?? 0), 0);
+  const grossExposurePct =
+    snapshot && portfolioValue > 0 ? (snapshot.summary.longExposure + snapshot.summary.shortExposure) / portfolioValue : null;
+  const netExposurePct = snapshot && portfolioValue > 0 ? (snapshot.summary.longExposure - snapshot.summary.shortExposure) / portfolioValue : null;
+  const marginUsagePct = account && account.equity > 0 ? account.maintenanceMargin / account.equity : null;
+  const cashPct = account && account.portfolioValue > 0 ? account.cash / account.portfolioValue : null;
 
   return (
     <>
@@ -917,8 +951,8 @@ function PortfolioDashboard({
               <SummaryCard label="現金" value={formatPrice(account.cash)} />
               <SummaryCard label="買付余力" value={formatPrice(account.buyingPower)} />
               <SummaryCard label="当日損益" value={formatSignedCurrency(account.dayPnl)} />
+              <SummaryCard label="純エクスポージャー" value={formatNullablePercent(netExposurePct)} />
               <SummaryCard label="保有銘柄" value={formatNumber(snapshot.summary.positionCount, 0)} />
-              <SummaryCard label="未約定注文" value={formatNumber(snapshot.summary.openOrderCount, 0)} />
             </section>
           </>
         ) : (
@@ -931,6 +965,60 @@ function PortfolioDashboard({
 
       {snapshot ? (
         <>
+          <section className="portfolio-analysis-grid">
+            <section className="panel portfolio-composition-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Asset Mix</p>
+                  <h2>資産構成</h2>
+                </div>
+                <span className="muted-copy">Exposure mix</span>
+              </div>
+              <PortfolioCompositionChart
+                longExposure={snapshot.summary.longExposure}
+                shortExposure={snapshot.summary.shortExposure}
+                cash={snapshot.account.cash}
+                total={snapshot.account.portfolioValue}
+              />
+              <div className="portfolio-insight-grid">
+                <InsightCard label="現金比率" value={formatNullablePercent(cashPct)} tone={cashPct !== null && cashPct < 0.05 ? "warn" : "neutral"} />
+                <InsightCard label="総エクスポージャー" value={formatNullablePercent(grossExposurePct)} tone={grossExposurePct !== null && grossExposurePct > 1 ? "warn" : "neutral"} />
+                <InsightCard label="上位5銘柄集中" value={formatPercent(topFiveAllocation)} tone={topFiveAllocation > 0.65 ? "warn" : "neutral"} />
+                <InsightCard label="維持証拠金率" value={formatNullablePercent(marginUsagePct)} tone={marginUsagePct !== null && marginUsagePct > 0.35 ? "warn" : "neutral"} />
+              </div>
+            </section>
+
+            <section className="panel concentration-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">Concentration</p>
+                  <h2>保有比率</h2>
+                </div>
+                <span className="muted-copy">Top positions</span>
+              </div>
+              {topPositions.length === 0 ? (
+                <p className="muted-copy">保有ポジションはありません。</p>
+              ) : (
+                <div className="position-allocation-list">
+                  {topPositions.map((position) => (
+                    <PositionAllocationRow key={position.symbol} position={position} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="panel pnl-leaders-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-eyebrow">P/L Drivers</p>
+                  <h2>損益の寄与</h2>
+                </div>
+                <span className="muted-copy">Unrealized P/L</span>
+              </div>
+              <PnlDrivers winners={winners} losers={losers} />
+            </section>
+          </section>
+
           <section className="portfolio-layout">
             <section className="panel allocation-panel">
               <div className="panel-header">
@@ -949,6 +1037,10 @@ function PortfolioDashboard({
                 <Metric label="最大比率" value={formatNullablePercent(snapshot.summary.largestPositionAllocationPct)} />
                 <Metric label="含み損益" value={formatSignedCurrency(snapshot.summary.totalUnrealizedPnl)} />
                 <Metric label="含み損益率" value={formatNullablePercent(snapshot.summary.totalUnrealizedPnlPct)} />
+                <Metric label="総エクスポージャー" value={formatNullablePercent(grossExposurePct)} />
+                <Metric label="純エクスポージャー" value={formatNullablePercent(netExposurePct)} />
+                <Metric label="上位5集中" value={formatPercent(topFiveAllocation)} />
+                <Metric label="未約定注文" value={formatNumber(snapshot.summary.openOrderCount, 0)} />
               </div>
             </section>
 
@@ -1102,6 +1194,128 @@ function AllocationRow({ label, value, total }: { label: string; value: number; 
         <i style={{ width: `${Math.min(100, Math.max(0, pct * 100))}%` }} />
       </div>
       <span>{formatPercent(pct)}</span>
+    </div>
+  );
+}
+
+function PortfolioCompositionChart({
+  longExposure,
+  shortExposure,
+  cash,
+  total
+}: {
+  longExposure: number;
+  shortExposure: number;
+  cash: number;
+  total: number;
+}) {
+  const longPct = total > 0 ? Math.max(0, longExposure / total) : 0;
+  const shortPct = total > 0 ? Math.max(0, shortExposure / total) : 0;
+  const cashPct = total > 0 ? Math.max(0, cash / total) : 0;
+  const totalPct = longPct + shortPct + cashPct || 1;
+  const longDeg = (longPct / totalPct) * 360;
+  const shortDeg = (shortPct / totalPct) * 360;
+  const chartStyle = {
+    background: `conic-gradient(var(--buy) 0deg ${longDeg}deg, var(--sell) ${longDeg}deg ${
+      longDeg + shortDeg
+    }deg, var(--accent) ${longDeg + shortDeg}deg 360deg)`
+  };
+
+  return (
+    <div className="portfolio-composition">
+      <div className="composition-donut" style={chartStyle} aria-label="Portfolio asset mix">
+        <div>
+          <span>Portfolio</span>
+          <strong>{formatPrice(total)}</strong>
+        </div>
+      </div>
+      <div className="composition-legend">
+        <CompositionLegendItem className="long" label="Long" value={longExposure} pct={longPct} />
+        <CompositionLegendItem className="short" label="Short" value={shortExposure} pct={shortPct} />
+        <CompositionLegendItem className="cash" label="Cash" value={cash} pct={cashPct} />
+      </div>
+    </div>
+  );
+}
+
+function CompositionLegendItem({ className, label, value, pct }: { className: string; label: string; value: number; pct: number }) {
+  return (
+    <div className={`composition-legend-item ${className}`}>
+      <span>{label}</span>
+      <strong>{formatPrice(value)}</strong>
+      <em>{formatPercent(pct)}</em>
+    </div>
+  );
+}
+
+function InsightCard({ label, value, tone }: { label: string; value: string; tone: "neutral" | "warn" }) {
+  return (
+    <div className={`portfolio-insight-card ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function PositionAllocationRow({ position }: { position: PortfolioSnapshot["positions"][number] }) {
+  const allocation = Math.abs(position.allocationPct ?? 0);
+  const capped = Math.min(100, allocation * 100);
+
+  return (
+    <div className="position-allocation-row">
+      <div>
+        <strong>{position.symbol}</strong>
+        <span>{position.side}</span>
+      </div>
+      <div className="position-allocation-track">
+        <i className={position.unrealizedPnl >= 0 ? "positive" : "negative"} style={{ width: `${capped}%` }} />
+      </div>
+      <div>
+        <strong>{formatNullablePercent(position.allocationPct)}</strong>
+        <span>{formatSignedCurrency(position.unrealizedPnl)}</span>
+      </div>
+    </div>
+  );
+}
+
+function PnlDrivers({
+  winners,
+  losers
+}: {
+  winners: PortfolioSnapshot["positions"];
+  losers: PortfolioSnapshot["positions"];
+}) {
+  const items = [...winners, ...losers];
+  const maxAbsPnl = Math.max(...items.map((position) => Math.abs(position.unrealizedPnl)), 1);
+
+  if (items.length === 0) {
+    return <p className="muted-copy">含み損益のあるポジションはありません。</p>;
+  }
+
+  return (
+    <div className="pnl-drivers-list">
+      {winners.length > 0 ? <span className="pnl-driver-section-label">Winners</span> : null}
+      {items.map((position) => {
+        const width = `${Math.max(4, (Math.abs(position.unrealizedPnl) / maxAbsPnl) * 100)}%`;
+        const isFirstLoser = losers[0]?.symbol === position.symbol;
+        return (
+          <div key={position.symbol} className="pnl-driver-entry">
+            {isFirstLoser ? <span className="pnl-driver-section-label">Losers</span> : null}
+            <div className="pnl-driver-row">
+              <div>
+                <strong>{position.symbol}</strong>
+                <span>{formatNullablePercent(position.unrealizedPnlPct)}</span>
+              </div>
+              <div className="pnl-driver-track">
+                <i className={position.unrealizedPnl >= 0 ? "positive" : "negative"} style={{ width }} />
+              </div>
+              <strong className={position.unrealizedPnl >= 0 ? "positive-text" : "negative-text"}>
+                {formatSignedCurrency(position.unrealizedPnl)}
+              </strong>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1281,177 +1495,353 @@ function ScoreMeter({ score }: { score: number }) {
 }
 
 function StockChart({ row }: { row: RecommendationItem }) {
-  const [range, setRange] = useState<"1M" | "3M" | "6M">("3M");
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const width = 860;
-  const height = 430;
-  const margin = { top: 22, right: 76, bottom: 38, left: 16 };
-  const volumeHeight = 82;
-  const gap = 18;
-  const chartHeight = height - margin.top - margin.bottom - volumeHeight - gap;
-  const volumeTop = margin.top + chartHeight + gap;
-  const rangeSize = range === "1M" ? 22 : range === "3M" ? 66 : 132;
-  const points = row.chart.slice(-rangeSize);
-  const priceValues = points.flatMap((point) => [point.high, point.low, point.sma20, point.sma50].filter((value): value is number => value !== null));
-  const minPrice = Math.min(...priceValues);
-  const maxPrice = Math.max(...priceValues);
-  const pricePadding = (maxPrice - minPrice || maxPrice * 0.02) * 0.08;
-  const lower = minPrice - pricePadding;
-  const upper = maxPrice + pricePadding;
-  const priceRange = upper - lower || 1;
-  const maxVolume = Math.max(...points.map((point) => point.volume), 1);
-  const plotWidth = width - margin.left - margin.right;
-  const candleSlot = plotWidth / Math.max(points.length, 1);
-  const candleWidth = Math.max(3, Math.min(10, candleSlot * 0.56));
-  const hovered = hoverIndex === null ? points[points.length - 1] : points[hoverIndex];
-  const current = points[points.length - 1];
-  const priceTicks = Array.from({ length: 5 }, (_, index) => lower + (priceRange / 4) * index).reverse();
-  const timeTicks = buildTimeTicks(points);
-  const xFor = (index: number) => margin.left + candleSlot * index + candleSlot / 2;
-  const yFor = (price: number) => margin.top + ((upper - price) / priceRange) * chartHeight;
-  const volumeYFor = (volume: number) => volumeTop + volumeHeight - (volume / maxVolume) * volumeHeight;
-  const pathFor = (selector: (point: RecommendationItem["chart"][number]) => number | null) =>
-    points
-      .reduce<string[]>((commands, point, index) => {
-        const value = selector(point);
-        if (value === null) {
-          return commands;
-        }
-        commands.push(`${commands.length === 0 ? "M" : "L"} ${xFor(index).toFixed(2)} ${yFor(value).toFixed(2)}`);
-        return commands;
-      }, [])
-      .join(" ");
+  const [range, setRange] = useState<ChartRange>("3M");
+  const [scale, setScale] = useState<ChartScale>("linear");
+  const [showSma20, setShowSma20] = useState(true);
+  const [showSma50, setShowSma50] = useState(true);
+  const [hovered, setHovered] = useState<RecommendationItem["chart"][number] | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const rangeSize = chartRanges.find((item) => item.id === range)?.points ?? 66;
+  const points = useMemo(() => row.chart.slice(-rangeSize), [rangeSize, row.chart]);
+  const current = points[points.length - 1] ?? row.chart[row.chart.length - 1] ?? null;
+  const activePoint = hovered ?? current;
+  const firstVisible = points[0];
+  const rangeChange = current && firstVisible ? current.close / firstVisible.open - 1 : 0;
+  const averageVolume = points.length > 0 ? points.reduce((sum, point) => sum + point.volume, 0) / points.length : 0;
+  const rangeHigh = points.length > 0 ? Math.max(...points.map((point) => point.high)) : 0;
+  const rangeLow = points.length > 0 ? Math.min(...points.map((point) => point.low)) : 0;
+  const canUseLogScale = row.chart.every((point) => point.low > 0);
 
-  function handlePointerMove(event: PointerEvent<SVGSVGElement>) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * width;
-    const index = Math.round((x - margin.left - candleSlot / 2) / candleSlot);
-    setHoverIndex(Math.max(0, Math.min(points.length - 1, index)));
+  useEffect(() => {
+    if (!isExpanded) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsExpanded(false);
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isExpanded]);
+
+  if (row.chart.length === 0) {
+    return (
+      <div className="chart-box stock-chart-box">
+        <div className="stock-chart-empty">チャートデータがありません</div>
+      </div>
+    );
   }
 
   return (
     <div className="chart-box stock-chart-box">
       <div className="stock-chart-toolbar">
         <div>
-          <strong>{row.symbol}</strong>
-          <span>{hovered ? `${hovered.date} / O ${formatPrice(hovered.open)} H ${formatPrice(hovered.high)} L ${formatPrice(hovered.low)} C ${formatPrice(hovered.close)}` : ""}</span>
+          <strong>
+            {row.symbol}
+            {current ? <PriceMove value={rangeChange} /> : null}
+          </strong>
+          <span>
+            {activePoint
+              ? `${activePoint.date} / O ${formatPrice(activePoint.open)} H ${formatPrice(activePoint.high)} L ${formatPrice(
+                  activePoint.low
+                )} C ${formatPrice(activePoint.close)} / Vol ${formatCompactVolume(activePoint.volume)}`
+              : ""}
+          </span>
         </div>
-        <div className="range-tabs" aria-label="Chart range">
-          {(["1M", "3M", "6M"] as const).map((item) => (
-            <button key={item} type="button" className={range === item ? "active" : ""} onClick={() => setRange(item)}>
-              {item}
+        <div className="chart-controls">
+          <div className="range-tabs" aria-label="Chart range">
+            {chartRanges.map((item) => (
+              <button key={item.id} type="button" className={range === item.id ? "active" : ""} onClick={() => setRange(item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="chart-options" aria-label="Chart options">
+            <button type="button" className={scale === "linear" ? "active" : ""} onClick={() => setScale("linear")}>
+              Lin
             </button>
-          ))}
+            <button type="button" className={scale === "log" ? "active" : ""} onClick={() => setScale("log")} disabled={!canUseLogScale}>
+              Log
+            </button>
+          </div>
         </div>
       </div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="mini-chart stock-chart"
-        role="img"
-        aria-label={`${row.symbol} candlestick chart`}
-        onPointerMove={handlePointerMove}
-        onPointerLeave={() => setHoverIndex(null)}
+      <div className="chart-stat-strip">
+        <Metric label="期間高値" value={formatPrice(rangeHigh)} />
+        <Metric label="期間安値" value={formatPrice(rangeLow)} />
+        <Metric label="平均出来高" value={formatCompactVolume(averageVolume)} />
+        <Metric label="表示本数" value={formatNumber(points.length, 0)} />
+      </div>
+      <div
+        className="stock-chart-expand-trigger"
+        role="button"
+        tabIndex={0}
+        onClick={() => setIsExpanded(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setIsExpanded(true);
+          }
+        }}
+        aria-label={`${row.symbol} chartを拡大表示`}
       >
-        <rect x="0" y="0" width={width} height={height} rx="8" className="chart-surface" />
-
-        {priceTicks.map((tick) => {
-          const y = yFor(tick);
-          return (
-            <g key={tick}>
-              <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="chart-grid-line" />
-              <text x={width - margin.right + 10} y={y + 4} className="axis-label">
-                {formatAxisPrice(tick)}
-              </text>
-            </g>
-          );
-        })}
-
-        {timeTicks.map(({ index, label }) => {
-          const x = xFor(index);
-          return (
-            <g key={`${index}-${label}`}>
-              <line x1={x} x2={x} y1={margin.top} y2={volumeTop + volumeHeight} className="chart-grid-line vertical" />
-              <text x={x} y={height - 12} textAnchor="middle" className="axis-label">
-                {label}
-              </text>
-            </g>
-          );
-        })}
-
-        <line x1={margin.left} x2={width - margin.right} y1={volumeTop - 8} y2={volumeTop - 8} className="chart-axis-line" />
-        <text x={margin.left} y={volumeTop + 10} className="axis-label">
-          Vol
-        </text>
-
-        {points.map((point, index) => {
-          const x = xFor(index);
-          const rising = point.close >= point.open;
-          const volumeY = volumeYFor(point.volume);
-          return (
-            <rect
-              key={`volume-${point.date}`}
-              x={x - candleWidth / 2}
-              y={volumeY}
-              width={candleWidth}
-              height={volumeTop + volumeHeight - volumeY}
-              className={rising ? "volume-bar up" : "volume-bar down"}
-            />
-          );
-        })}
-
-        {points.map((point, index) => {
-          const x = xFor(index);
-          const rising = point.close >= point.open;
-          const highY = yFor(point.high);
-          const lowY = yFor(point.low);
-          const openY = yFor(point.open);
-          const closeY = yFor(point.close);
-          const bodyY = Math.min(openY, closeY);
-          const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
-          return (
-            <g key={point.date}>
-              <line x1={x} x2={x} y1={highY} y2={lowY} className={rising ? "candle-wick up" : "candle-wick down"} />
-              <rect
-                x={x - candleWidth / 2}
-                y={bodyY}
-                width={candleWidth}
-                height={bodyHeight}
-                rx="1.5"
-                className={rising ? "candle-body up" : "candle-body down"}
-              />
-            </g>
-          );
-        })}
-
-        <path d={pathFor((point) => point.sma50)} className="sma50-stroke" fill="none" strokeWidth="2" />
-        <path d={pathFor((point) => point.sma20)} className="sma20-stroke" fill="none" strokeWidth="2" />
-
-        {current ? (
-          <g>
-            <line x1={margin.left} x2={width - margin.right} y1={yFor(current.close)} y2={yFor(current.close)} className="current-price-line" />
-            <rect x={width - margin.right + 5} y={yFor(current.close) - 11} width="62" height="22" rx="5" className="current-price-label-bg" />
-            <text x={width - margin.right + 36} y={yFor(current.close) + 4} textAnchor="middle" className="current-price-label">
-              {formatAxisPrice(current.close)}
-            </text>
-          </g>
-        ) : null}
-
-        {hoverIndex !== null && hovered ? (
-          <g>
-            <line x1={xFor(hoverIndex)} x2={xFor(hoverIndex)} y1={margin.top} y2={volumeTop + volumeHeight} className="crosshair-line" />
-            <line x1={margin.left} x2={width - margin.right} y1={yFor(hovered.close)} y2={yFor(hovered.close)} className="crosshair-line" />
-            <circle cx={xFor(hoverIndex)} cy={yFor(hovered.close)} r="4" className="crosshair-dot" />
-          </g>
-        ) : null}
-      </svg>
+        <LightweightStockChart
+          row={row}
+          range={range}
+          rangeSize={rangeSize}
+          scale={scale}
+          showSma20={showSma20}
+          showSma50={showSma50}
+          canUseLogScale={canUseLogScale}
+          height={470}
+          onHover={setHovered}
+        />
+        <span className="chart-expand-hint">クリックで拡大</span>
+      </div>
       <div className="chart-legend">
         <span className="candle-up-key">上昇</span>
         <span className="candle-down-key">下落</span>
-        <span className="sma20-line-key">20日線</span>
-        <span className="sma50-line-key">50日線</span>
+        <label className="sma20-line-key">
+          <input type="checkbox" checked={showSma20} onChange={(event) => setShowSma20(event.target.checked)} />
+          20日線
+        </label>
+        <label className="sma50-line-key">
+          <input type="checkbox" checked={showSma50} onChange={(event) => setShowSma50(event.target.checked)} />
+          50日線
+        </label>
         <span className="volume-line-key">出来高</span>
       </div>
+      <a className="chart-attribution" href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
+        Charts by TradingView
+      </a>
+      {isExpanded ? (
+        <div className="chart-modal-backdrop" role="presentation" onClick={() => setIsExpanded(false)}>
+          <section className="chart-modal" role="dialog" aria-modal="true" aria-label={`${row.symbol} expanded chart`} onClick={(event) => event.stopPropagation()}>
+            <div className="chart-modal-header">
+              <div>
+                <p className="panel-eyebrow">Expanded Chart</p>
+                <h2>
+                  {row.symbol}
+                  {current ? <PriceMove value={rangeChange} /> : null}
+                </h2>
+                <span>
+                  {activePoint
+                    ? `${activePoint.date} / O ${formatPrice(activePoint.open)} H ${formatPrice(activePoint.high)} L ${formatPrice(
+                        activePoint.low
+                      )} C ${formatPrice(activePoint.close)} / Vol ${formatCompactVolume(activePoint.volume)}`
+                    : ""}
+                </span>
+              </div>
+              <button type="button" className="chart-modal-close" onClick={() => setIsExpanded(false)} aria-label="拡大チャートを閉じる">
+                Close
+              </button>
+            </div>
+            <div className="chart-modal-controls">
+              <div className="range-tabs" aria-label="Expanded chart range">
+                {chartRanges.map((item) => (
+                  <button key={item.id} type="button" className={range === item.id ? "active" : ""} onClick={() => setRange(item.id)}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div className="chart-options" aria-label="Expanded chart options">
+                <button type="button" className={scale === "linear" ? "active" : ""} onClick={() => setScale("linear")}>
+                  Lin
+                </button>
+                <button type="button" className={scale === "log" ? "active" : ""} onClick={() => setScale("log")} disabled={!canUseLogScale}>
+                  Log
+                </button>
+              </div>
+            </div>
+            <LightweightStockChart
+              row={row}
+              range={range}
+              rangeSize={rangeSize}
+              scale={scale}
+              showSma20={showSma20}
+              showSma50={showSma50}
+              canUseLogScale={canUseLogScale}
+              height={650}
+              expanded
+              onHover={setHovered}
+            />
+          </section>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function LightweightStockChart({
+  row,
+  range,
+  rangeSize,
+  scale,
+  showSma20,
+  showSma50,
+  canUseLogScale,
+  height,
+  expanded = false,
+  onHover
+}: {
+  row: RecommendationItem;
+  range: ChartRange;
+  rangeSize: number;
+  scale: ChartScale;
+  showSma20: boolean;
+  showSma50: boolean;
+  canUseLogScale: boolean;
+  height: number;
+  expanded?: boolean;
+  onHover: (point: RecommendationItem["chart"][number] | null) => void;
+}) {
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container || row.chart.length === 0) {
+      return;
+    }
+
+    const upColor = "#15803d";
+    const downColor = "#dc2626";
+    const chart = createChart(container, {
+      autoSize: true,
+      height,
+      layout: {
+        background: { type: ColorType.Solid, color: "#fbfdff" },
+        textColor: "#64748b",
+        attributionLogo: true
+      },
+      grid: {
+        vertLines: { color: "rgba(99, 112, 131, 0.14)" },
+        horzLines: { color: "rgba(99, 112, 131, 0.14)" }
+      },
+      rightPriceScale: {
+        borderColor: "rgba(99, 112, 131, 0.22)",
+        mode: scale === "log" && canUseLogScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+        scaleMargins: { top: 0.06, bottom: 0.28 }
+      },
+      timeScale: {
+        borderColor: "rgba(99, 112, 131, 0.22)",
+        rightOffset: expanded ? 8 : 3,
+        timeVisible: false,
+        secondsVisible: false
+      },
+      crosshair: {
+        mode: CrosshairMode.MagnetOHLC,
+        vertLine: { color: "rgba(17, 24, 39, 0.38)", labelBackgroundColor: "#111827" },
+        horzLine: { color: "rgba(17, 24, 39, 0.38)", labelBackgroundColor: "#111827" }
+      },
+      localization: {
+        locale: "ja-JP",
+        priceFormatter: (price: number) => formatAxisPrice(price)
+      },
+      handleScroll: true,
+      handleScale: true
+    });
+
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      title: row.symbol,
+      upColor,
+      downColor,
+      borderUpColor: upColor,
+      borderDownColor: downColor,
+      wickUpColor: upColor,
+      wickDownColor: downColor,
+      lastValueVisible: true,
+      priceLineVisible: true
+    });
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      title: "Volume",
+      priceFormat: { type: "volume" },
+      priceScaleId: "volume",
+      lastValueVisible: false,
+      priceLineVisible: false
+    });
+    const sma20Series = chart.addSeries(LineSeries, {
+      title: "SMA20",
+      color: upColor,
+      lineWidth: 2,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      visible: showSma20
+    });
+    const sma50Series = chart.addSeries(LineSeries, {
+      title: "SMA50",
+      color: "#7c3aed",
+      lineWidth: 2,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      visible: showSma50
+    });
+
+    chart.priceScale("volume").applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 }
+    });
+
+    candleSeries.setData(
+      row.chart.map((point): CandlestickData<Time> => ({
+        time: point.date,
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close
+      }))
+    );
+    volumeSeries.setData(
+      row.chart.map((point): HistogramData<Time> => ({
+        time: point.date,
+        value: point.volume,
+        color: point.close >= point.open ? "rgba(21, 128, 61, 0.34)" : "rgba(220, 38, 38, 0.34)"
+      }))
+    );
+    sma20Series.setData(
+      row.chart.filter((point) => point.sma20 !== null).map((point): LineData<Time> => ({ time: point.date, value: point.sma20 ?? point.close }))
+    );
+    sma50Series.setData(
+      row.chart.filter((point) => point.sma50 !== null).map((point): LineData<Time> => ({ time: point.date, value: point.sma50 ?? point.close }))
+    );
+
+    const to = row.chart.length - 1;
+    const from = Math.max(0, to - Math.max(rangeSize - 1, 1));
+    chart.timeScale().setVisibleLogicalRange({ from, to: range === "1D" ? to + 1 : to });
+
+    const pointsByDate = new Map(row.chart.map((point) => [point.date, point]));
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time) {
+        onHover(null);
+        return;
+      }
+      onHover(pointsByDate.get(String(param.time)) ?? null);
+    });
+
+    const resizeObserver = new ResizeObserver(() => {
+      chart.resize(container.clientWidth, height);
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+    };
+  }, [canUseLogScale, expanded, height, onHover, range, rangeSize, row.chart, row.symbol, scale, showSma20, showSma50]);
+
+  return (
+    <div
+      ref={chartContainerRef}
+      className={`stock-chart-canvas ${expanded ? "expanded" : ""}`}
+      style={{ height }}
+      aria-label={`${row.symbol} candlestick chart`}
+    />
   );
 }
 
@@ -1535,6 +1925,20 @@ function formatNullablePercent(value: number | null) {
   return value === null ? "-" : formatPercent(value);
 }
 
+function formatCompactVolume(value: number) {
+  if (value >= 1_000_000_000) {
+    return `${formatNumber(value / 1_000_000_000, 1)}B`;
+  }
+  if (value >= 1_000_000) {
+    return `${formatNumber(value / 1_000_000, 1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${formatNumber(value / 1_000, 1)}K`;
+  }
+
+  return formatNumber(value, 0);
+}
+
 function formatNullablePercentileRank(value: number | null) {
   return value === null ? "-" : `${formatNumber(value, 0)}`;
 }
@@ -1568,28 +1972,6 @@ function formatSignedCurrency(value: number) {
 
 function distanceFrom(close: number, reference: number | null) {
   return reference === null || reference === 0 ? "-" : formatPercent(close / reference - 1);
-}
-
-function buildTimeTicks(points: RecommendationItem["chart"]) {
-  if (points.length === 0) {
-    return [];
-  }
-
-  const indexes = Array.from(new Set([0, Math.floor((points.length - 1) / 3), Math.floor(((points.length - 1) * 2) / 3), points.length - 1]));
-
-  return indexes.map((index) => ({
-    index,
-    label: formatChartDate(points[index].date)
-  }));
-}
-
-function formatChartDate(date: string) {
-  const parsed = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) {
-    return date.slice(5);
-  }
-
-  return `${parsed.getUTCMonth() + 1}/${parsed.getUTCDate()}`;
 }
 
 function formatAxisPrice(value: number) {
