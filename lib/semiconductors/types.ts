@@ -219,6 +219,9 @@ export interface RecommendationItem {
   scoreAdjustments?: ScoreAdjustment[];
   rank: number;
   relativeStrengthRank: number;
+  relativeStrengthRawRank?: number;
+  relativeStrengthRawScore?: number;
+  relativeStrengthRiskAdjustedScore?: number;
   marketRegime?: MarketRegime;
   earningsDate?: string;
   indicators: IndicatorSnapshot;

@@ -81,6 +81,7 @@ const VOLUME_THRESHOLDS = {
 
 export interface AnalyzeSemiconductorsOptions {
   previousActions?: Partial<Record<string, SignalAction>>;
+  previousScores?: Partial<Record<string, number>>;
   marketBars?: {
     semiconductor?: PriceBar[];
     qqq?: PriceBar[];
@@ -102,6 +103,7 @@ export function analyzeSemiconductors(
         profile,
         normalizeBars(barsBySymbol[profile.symbol] ?? []),
         options.previousActions?.[profile.symbol],
+        options.previousScores?.[profile.symbol],
         normalizedMarketBars
       )
     )
@@ -157,6 +159,7 @@ function buildRecommendation(
   profile: SymbolProfile,
   bars: PriceBar[],
   previousAction?: SignalAction,
+  previousScore?: number,
   marketBars?: AnalyzeSemiconductorsOptions["marketBars"]
 ): RecommendationItem | null {
   if (bars.length < MINIMUM_BARS) {
@@ -216,7 +219,8 @@ function buildRecommendation(
   const factorAnalysis = buildFactorAnalysisSnapshot(bars, marketBars);
   const scoreAdjustments = [
     ...buildNormalizedScoreAdjustments(normalizedTechnicals),
-    ...buildFactorScoreAdjustments(factorAnalysis)
+    ...buildFactorScoreAdjustments(factorAnalysis),
+    ...buildSignalStabilityAdjustments(previousAction, previousScore, scoreBreakdown)
   ];
   const score = calculateAdjustedScore(scoreBreakdown, scoreAdjustments);
   const rating = ratingFromScore(score);
@@ -234,6 +238,7 @@ function buildRecommendation(
     previousAction,
     signalChange: calculateSignalChange(previousAction, action),
     score,
+    scoreChange: previousScore === undefined ? undefined : score - previousScore,
     scoreBreakdown,
     scoreAdjustments,
     rank: 0,
@@ -349,7 +354,7 @@ function calculateAdjustedScore(scoreBreakdown: ScoreBreakdown, adjustments: Sco
 function applyRelativeStrengthScores(rows: RecommendationItem[]) {
   const size = Math.max(1, rows.length);
   const horizonScores = buildRelativeStrengthHorizonScores(rows);
-  const compositeScores = new Map(
+  const rawCompositeScores = new Map(
     rows.map((row) => {
       const symbolScores = horizonScores.get(row.symbol);
       const relativeStrengthScore =
@@ -362,8 +367,15 @@ function applyRelativeStrengthScores(rows: RecommendationItem[]) {
       return [row.symbol, relativeStrengthScore];
     })
   );
+  const riskAdjustedCompositeScores = new Map(
+    rows.map((row) => {
+      const rawScore = rawCompositeScores.get(row.symbol) ?? 50;
+      const volatilityPenalty = riskAdjustmentPenalty(row);
+      return [row.symbol, clamp(rawScore - volatilityPenalty, 0, 100)];
+    })
+  );
   const rankedByComposite = [...rows].sort((left, right) => {
-    const scoreDelta = (compositeScores.get(right.symbol) ?? 0) - (compositeScores.get(left.symbol) ?? 0);
+    const scoreDelta = (riskAdjustedCompositeScores.get(right.symbol) ?? 0) - (riskAdjustedCompositeScores.get(left.symbol) ?? 0);
     if (scoreDelta !== 0) {
       return scoreDelta;
     }
@@ -371,10 +383,20 @@ function applyRelativeStrengthScores(rows: RecommendationItem[]) {
     return left.symbol.localeCompare(right.symbol);
   });
   const rankBySymbol = new Map(rankedByComposite.map((row, index) => [row.symbol, index + 1]));
+  const rawRankedByComposite = [...rows].sort((left, right) => {
+    const scoreDelta = (rawCompositeScores.get(right.symbol) ?? 0) - (rawCompositeScores.get(left.symbol) ?? 0);
+    if (scoreDelta !== 0) {
+      return scoreDelta;
+    }
+
+    return left.symbol.localeCompare(right.symbol);
+  });
+  const rawRankBySymbol = new Map(rawRankedByComposite.map((row, index) => [row.symbol, index + 1]));
 
   return rows.map((row) => {
     const relativeStrengthRank = rankBySymbol.get(row.symbol) ?? size;
-    const relativeStrengthScore = size === 1 ? 50 : (compositeScores.get(row.symbol) ?? 50);
+    const rawRelativeStrengthScore = size === 1 ? 50 : (rawCompositeScores.get(row.symbol) ?? 50);
+    const relativeStrengthScore = size === 1 ? 50 : (riskAdjustedCompositeScores.get(row.symbol) ?? 50);
     const scoreBreakdown = {
       ...row.scoreBreakdown,
       relativeStrengthScore: Math.round(relativeStrengthScore)
@@ -399,10 +421,33 @@ function applyRelativeStrengthScores(rows: RecommendationItem[]) {
       signalChange: calculateSignalChange(row.previousAction, action),
       scoreBreakdown,
       relativeStrengthRank,
+      relativeStrengthRawRank: rawRankBySymbol.get(row.symbol) ?? size,
+      relativeStrengthRawScore: Math.round(rawRelativeStrengthScore),
+      relativeStrengthRiskAdjustedScore: Math.round(relativeStrengthScore),
       reasons: unique(reasons).slice(0, 5),
       risks: unique(risks).slice(0, 4)
     };
   });
+}
+
+function riskAdjustmentPenalty(row: RecommendationItem) {
+  const atrPct = row.indicators.atrPct;
+  const residualVolatility = row.factorAnalysis?.residualVolatility;
+  let penalty = 0;
+
+  if (atrPct !== null) {
+    penalty += clamp((atrPct - 0.035) / 0.055, 0, 1) * 14;
+  }
+
+  if (residualVolatility !== undefined && residualVolatility !== null) {
+    penalty += clamp((residualVolatility - 0.3) / 0.45, 0, 1) * 8;
+  }
+
+  if ((row.normalizedTechnicals?.atrPctPercentile ?? 50) >= 85) {
+    penalty += 4;
+  }
+
+  return penalty;
 }
 
 function buildRelativeStrengthHorizonScores(rows: RecommendationItem[]) {
@@ -793,6 +838,34 @@ function buildFactorScoreAdjustments(factorAnalysis: FactorAnalysisSnapshot | un
 
   if ((factorAnalysis.marketBeta ?? 1) > 1.8 && (factorAnalysis.residualVolatility ?? 0) > 0.55) {
     adjustments.push({ source: "factor", label: "High beta and residual volatility", value: -2 });
+  }
+
+  return adjustments;
+}
+
+function buildSignalStabilityAdjustments(
+  previousAction: SignalAction | undefined,
+  previousScore: number | undefined,
+  scoreBreakdown: ScoreBreakdown
+): ScoreAdjustment[] {
+  if (previousAction === undefined && previousScore === undefined) {
+    return [];
+  }
+
+  const baseScore = calculateFinalScore(scoreBreakdown);
+  const adjustments: ScoreAdjustment[] = [];
+  const scoreChange = previousScore === undefined ? null : baseScore - previousScore;
+
+  if (previousAction !== "BUY" && baseScore >= RATING_THRESHOLDS.buy && (scoreChange === null || scoreChange < 2)) {
+    adjustments.push({ source: "signal-stability", label: "New BUY requires positive score confirmation", value: -2 });
+  }
+
+  if (previousAction === "BUY" && baseScore >= RATING_THRESHOLDS.watch && baseScore < RATING_THRESHOLDS.buy) {
+    adjustments.push({ source: "signal-stability", label: "Existing BUY retains mild hysteresis", value: 1 });
+  }
+
+  if (scoreChange !== null && scoreChange <= -6) {
+    adjustments.push({ source: "signal-stability", label: "Score deterioration", value: -2 });
   }
 
   return adjustments;

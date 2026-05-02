@@ -1,6 +1,7 @@
 import { MINIMUM_BARS, analyzeSemiconductors } from "@/lib/semiconductors/analyzer";
 import {
   DEFAULT_SEMICONDUCTOR_UNIVERSE,
+  type MarketRegime,
   type PriceBar,
   type SignalAction,
   type SignalRating,
@@ -9,6 +10,9 @@ import {
 
 const DEFAULT_HORIZONS = [20, 63] as const;
 const DEFAULT_SCORE_BUCKET_SIZE = 10;
+const DEFAULT_EXECUTION_PRICE: SignalBacktestExecutionPrice = "nextOpen";
+
+export type SignalBacktestExecutionPrice = "signalClose" | "nextOpen";
 
 export interface SignalBacktestOptions {
   horizons?: readonly number[];
@@ -17,6 +21,9 @@ export interface SignalBacktestOptions {
   scoreBucketSize?: number;
   startDate?: string;
   endDate?: string;
+  executionPrice?: SignalBacktestExecutionPrice;
+  transactionCostBps?: number;
+  slippageBps?: number;
   marketBars?: {
     semiconductor?: PriceBar[];
     qqq?: PriceBar[];
@@ -26,8 +33,14 @@ export interface SignalBacktestOptions {
 export interface SignalBacktestOutcome {
   horizon: number;
   forwardReturn: number;
+  grossForwardReturn: number;
   maxDrawdown: number;
   maxAdverseExcursion: number;
+  entryDate: string;
+  exitDate: string;
+  entryPrice: number;
+  exitPrice: number;
+  totalCostBps: number;
 }
 
 export interface SignalBacktestReturnPercentiles {
@@ -50,6 +63,7 @@ export interface SignalBacktestEvent {
   close: number;
   rank: number;
   relativeStrengthRank: number;
+  marketRegime: MarketRegime;
   outcomes: SignalBacktestOutcome[];
 }
 
@@ -97,6 +111,7 @@ export interface SignalBacktestResult {
   groups: SignalBacktestGroupSummary[];
   byAction: SignalBacktestGroupSummary[];
   byScoreBucket: SignalBacktestGroupSummary[];
+  byMarketRegime: SignalBacktestGroupSummary[];
   summary: {
     asOfStart: string | null;
     asOfEnd: string | null;
@@ -109,6 +124,9 @@ export interface SignalBacktestResult {
     totalOutcomes: number;
     skippedOutcomes: number;
     skippedByHorizon: Record<number, number>;
+    executionPrice: SignalBacktestExecutionPrice;
+    transactionCostBps: number;
+    slippageBps: number;
   };
 }
 
@@ -152,6 +170,9 @@ export function runSignalBacktest(
   const scoreBucketSize = normalizePositiveInteger(options.scoreBucketSize, DEFAULT_SCORE_BUCKET_SIZE);
   const minHistoryBars = Math.max(MINIMUM_BARS, normalizePositiveInteger(options.minHistoryBars, MINIMUM_BARS));
   const sampleEvery = normalizePositiveInteger(options.sampleEvery, 1);
+  const executionPrice = options.executionPrice ?? DEFAULT_EXECUTION_PRICE;
+  const transactionCostBps = normalizeNonNegativeNumber(options.transactionCostBps, 0);
+  const slippageBps = normalizeNonNegativeNumber(options.slippageBps, 0);
   const symbols = universe.map((profile) => profile.symbol);
   const normalizedBars = normalizeBarsBySymbol(barsBySymbol, symbols);
   const dateUniverse = buildCommonDateUniverse(normalizedBars, symbols, options.startDate, options.endDate);
@@ -197,7 +218,11 @@ export function runSignalBacktest(
 
       const outcomes: SignalBacktestOutcome[] = [];
       for (const horizon of horizons) {
-        const outcome = calculateOutcome(symbolBars, currentIndex, horizon);
+        const outcome = calculateOutcome(symbolBars, currentIndex, horizon, {
+          executionPrice,
+          transactionCostBps,
+          slippageBps
+        });
         if (outcome === null) {
           skippedByHorizon[horizon] += 1;
           continue;
@@ -222,6 +247,7 @@ export function runSignalBacktest(
         close: recommendation.indicators.close,
         rank: recommendation.rank,
         relativeStrengthRank: recommendation.relativeStrengthRank,
+        marketRegime: recommendation.marketRegime ?? result.summary.marketRegime,
         outcomes
       });
     }
@@ -256,6 +282,12 @@ export function runSignalBacktest(
       scoreBucketMax: event.scoreBucketMax
     })
   );
+  const byMarketRegime = aggregateGroups(
+    events,
+    horizons,
+    (event) => event.marketRegime,
+    (event) => ({ group: event.marketRegime })
+  );
   const totalOutcomes = events.reduce((total, event) => total + event.outcomes.length, 0);
   const skippedOutcomes = Object.values(skippedByHorizon).reduce((total, count) => total + count, 0);
 
@@ -264,6 +296,7 @@ export function runSignalBacktest(
     groups,
     byAction,
     byScoreBucket,
+    byMarketRegime,
     summary: {
       asOfStart: events[0]?.asOf ?? null,
       asOfEnd: events[events.length - 1]?.asOf ?? null,
@@ -275,7 +308,10 @@ export function runSignalBacktest(
       includedSignals: events.length,
       totalOutcomes,
       skippedOutcomes,
-      skippedByHorizon
+      skippedByHorizon,
+      executionPrice,
+      transactionCostBps,
+      slippageBps
     }
   };
 }
@@ -293,33 +329,56 @@ export function scoreBucketFor(score: number, bucketSize = DEFAULT_SCORE_BUCKET_
   };
 }
 
-function calculateOutcome(bars: PriceBar[], currentIndex: number, horizon: number): SignalBacktestOutcome | null {
-  const entry = bars[currentIndex];
-  const exit = bars[currentIndex + horizon];
-  if (!entry || !exit || entry.close <= 0) {
+function calculateOutcome(
+  bars: PriceBar[],
+  currentIndex: number,
+  horizon: number,
+  options: {
+    executionPrice: SignalBacktestExecutionPrice;
+    transactionCostBps: number;
+    slippageBps: number;
+  }
+): SignalBacktestOutcome | null {
+  const entryIndex = options.executionPrice === "nextOpen" ? currentIndex + 1 : currentIndex;
+  const exitIndex = currentIndex + horizon;
+  const entry = bars[entryIndex];
+  const exit = bars[exitIndex];
+  const entryPrice = options.executionPrice === "nextOpen" ? entry?.open : entry?.close;
+  const exitPrice = exit?.close;
+
+  if (!entry || !exit || !entryPrice || !exitPrice || entryPrice <= 0) {
     return null;
   }
 
-  let peak = entry.close;
+  const totalCost = ((options.transactionCostBps + options.slippageBps) * 2) / 10_000;
+  const grossForwardReturn = exitPrice / entryPrice - 1;
+  const forwardReturn = grossForwardReturn - totalCost;
+  let peak = entryPrice;
   let maxDrawdown = 0;
   let maxAdverseExcursion = 0;
 
-  for (let index = currentIndex + 1; index <= currentIndex + horizon; index += 1) {
+  for (let index = entryIndex; index <= exitIndex; index += 1) {
     const bar = bars[index];
     if (!bar) {
       return null;
     }
 
     maxDrawdown = Math.min(maxDrawdown, bar.low / peak - 1);
-    maxAdverseExcursion = Math.min(maxAdverseExcursion, bar.low / entry.close - 1);
+    maxAdverseExcursion = Math.min(maxAdverseExcursion, bar.low / entryPrice - 1);
     peak = Math.max(peak, bar.high);
   }
 
   return {
     horizon,
-    forwardReturn: exit.close / entry.close - 1,
+    forwardReturn,
+    grossForwardReturn,
     maxDrawdown,
-    maxAdverseExcursion
+    maxAdverseExcursion,
+    entryDate: entry.date,
+    exitDate: exit.date,
+    entryPrice,
+    exitPrice,
+    totalCostBps: (options.transactionCostBps + options.slippageBps) * 2
   };
 }
 
@@ -606,6 +665,14 @@ function normalizePositiveInteger(value: number | undefined, fallback: number) {
   }
 
   return Math.floor(value);
+}
+
+function normalizeNonNegativeNumber(value: number | undefined, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(0, value);
 }
 
 function clamp(value: number, min: number, max: number) {

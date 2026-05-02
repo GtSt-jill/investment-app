@@ -93,6 +93,54 @@ describe("runSignalBacktest", () => {
     expect(metrics.averageAdverseCapture).toBeNull();
   });
 
+  it("uses next open execution by default and subtracts round-trip trading friction", () => {
+    const noCost = runSignalBacktest(
+      {
+        BUYER: makeBars(70, 0.64, { length: 340, volumeMode: "rising" }),
+        SELLER: makeBars(190, -0.5, { length: 340, volumeMode: "falling" })
+      },
+      universe,
+      { horizons: [20], transactionCostBps: 0, slippageBps: 0 }
+    );
+    const withCost = runSignalBacktest(
+      {
+        BUYER: makeBars(70, 0.64, { length: 340, volumeMode: "rising" }),
+        SELLER: makeBars(190, -0.5, { length: 340, volumeMode: "falling" })
+      },
+      universe,
+      { horizons: [20], transactionCostBps: 5, slippageBps: 10 }
+    );
+
+    const noCostOutcome = noCost.events[0].outcomes[0];
+    const withCostOutcome = withCost.events[0].outcomes[0];
+
+    expect(noCost.summary.executionPrice).toBe("nextOpen");
+    expect(noCostOutcome.entryDate > noCost.events[0].asOf).toBe(true);
+    expect(withCostOutcome.totalCostBps).toBe(30);
+    expect(withCostOutcome.forwardReturn).toBeCloseTo(withCostOutcome.grossForwardReturn - 0.003);
+    expect(withCostOutcome.forwardReturn).toBeCloseTo(noCostOutcome.forwardReturn - 0.003);
+  });
+
+  it("groups backtest results by market regime", () => {
+    const result = runSignalBacktest(
+      {
+        BUYER: makeBars(70, 0.64, { length: 340, volumeMode: "rising" }),
+        SELLER: makeBars(190, -0.5, { length: 340, volumeMode: "falling" })
+      },
+      universe,
+      {
+        horizons: [20],
+        marketBars: {
+          semiconductor: makeBars(100, 0.4, { length: 340 }),
+          qqq: makeBars(120, 0.3, { length: 340 })
+        }
+      }
+    );
+
+    expect(result.byMarketRegime.some((group) => group.group === "bullish")).toBe(true);
+    expect(result.events.every((event) => event.marketRegime === "bullish")).toBe(true);
+  });
+
   it("calculates loss-side metrics and adverse capture for losing buckets", () => {
     const result = runSignalBacktest(
       {

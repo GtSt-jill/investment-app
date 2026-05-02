@@ -90,6 +90,47 @@ describe("analyzeSemiconductors", () => {
     expect(leader.relativeStrengthRank).toBeLessThan(singleHorizonSpike.relativeStrengthRank);
   });
 
+  it("records raw and risk-adjusted relative strength scores separately", () => {
+    const result = analyzeSemiconductors(
+      {
+        LEADER: makeMomentumProfileBars({ momentum20: 0.08, momentum63: 0.18, momentum126: 0.28 }),
+        MID: makeMomentumProfileBars({ momentum20: 0.02, momentum63: 0.3, momentum126: 0.02 }),
+        LAGGARD: makeMomentumProfileBars({ momentum20: -0.04, momentum63: -0.08, momentum126: -0.12 })
+      },
+      universe
+    );
+    const leader = find(result, "LEADER");
+
+    expect(leader.relativeStrengthRawScore).toEqual(expect.any(Number));
+    expect(leader.relativeStrengthRiskAdjustedScore).toEqual(expect.any(Number));
+    expect(leader.relativeStrengthRiskAdjustedScore).toBeLessThanOrEqual(leader.relativeStrengthRawScore ?? 100);
+  });
+
+  it("adds signal-stability adjustments when previous score context is provided", () => {
+    const withoutHistory = analyzeSemiconductors(
+      {
+        LEADER: makeBars(80, 0.72, { volumeMode: "rising" })
+      },
+      [universe[0]]
+    );
+    const currentScore = find(withoutHistory, "LEADER").score;
+    const withHistory = analyzeSemiconductors(
+      {
+        LEADER: makeBars(80, 0.72, { volumeMode: "rising" })
+      },
+      [universe[0]],
+      {
+        previousActions: { LEADER: "BUY" },
+        previousScores: { LEADER: currentScore + 20 }
+      }
+    );
+
+    expect(find(withHistory, "LEADER").scoreAdjustments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: "signal-stability" })])
+    );
+    expect(find(withHistory, "LEADER").scoreChange).toEqual(expect.any(Number));
+  });
+
   it("produces BUY / HOLD / SELL actions from category scores", () => {
     const result = analyzeSemiconductors(
       {

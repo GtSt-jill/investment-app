@@ -108,6 +108,7 @@ relativeStrengthScore =
 ```
 
 各期間の順位スコアは、最上位を100点、最下位を0点として線形変換します。`relativeStrengthRank` はこの合成スコアで順位付けします。
+実装上は、生の合成スコアに加えて ATR 比率、残差ボラティリティ、銘柄自身の ATR パーセンタイルによるリスク調整を行います。`relativeStrengthRawScore` / `relativeStrengthRawRank` には未調整の順位を残し、最終スコアに使う `relativeStrengthScore` と `relativeStrengthRank` はリスク調整後の値です。
 
 ```mermaid
 flowchart LR
@@ -414,7 +415,10 @@ runSignalBacktest(barsBySymbol, universe?, options?)
 - 過去の各 as-of 時点で `analyzeSemiconductors()` を実行。半導体以外を検証する場合は、対象カテゴリを含む `universe` を明示して渡す
 - 銘柄間の相対強度母集団が日ごとに崩れないよう、検証日は対象銘柄すべてに日足がある共通日付に限定
 - 既定では 20 / 63 営業日先を検証
+- 既定ではシグナル日の終値ではなく翌営業日の始値をエントリー価格として使う
+- `transactionCostBps` と `slippageBps` で往復コストを控除できる
 - Action 別、スコア帯別、Action + スコア帯別に集計
+- 市場レジーム別に集計
 - 将来データ不足の horizon はスキップし、件数を記録
 
 主な集計値:
@@ -446,7 +450,7 @@ runSignalBacktest(barsBySymbol, universe?, options?)
 
 全勝バケットの `profitFactor` は `Infinity`、損益がないバケットや outcome がない horizon は `null` です。
 
-このバックテストは、スコアの閾値や重みを変更したときに、翌20営業日・63営業日の成績が改善したかを確認するための基盤です。ただし、これはシグナル発生日の終値から将来リターンを集計する検証であり、約定、スプレッド、スリッページ、手数料、partial fill、broker rejection、注文タイミングはシミュレーションしません。実資金投入前には paper trading の実注文履歴で別途確認が必要です。
+このバックテストは、スコアの閾値や重みを変更したときに、翌20営業日・63営業日の成績が改善したかを確認するための基盤です。翌営業日始値、スリッページ、取引コストまでは反映できますが、partial fill、broker rejection、注文時刻別 VWAP、マーケットインパクト、ポートフォリオ全体のリバランス制約はまだシミュレーションしません。実資金投入前には paper trading の実注文履歴で別途確認が必要です。
 
 ## 決算前フィルター
 
