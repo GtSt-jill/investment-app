@@ -232,6 +232,7 @@ function buildRecommendation(
     name: profile.name,
     segment: profile.segment,
     category: profile.category,
+    dataProvider: profile.dataProvider,
     asOf: latest.date,
     rating,
     action,

@@ -4,14 +4,24 @@ export const SECURITY_CATEGORIES = [
   { id: "software-ai", label: "AI・ソフトウェア", description: "AI、SaaS、データ分析、サイバーセキュリティ" },
   { id: "cloud-data", label: "クラウド・データ", description: "ストレージ、ネットワーク、データ基盤" },
   { id: "clean-energy", label: "クリーンエネルギー", description: "太陽光、EV、電力・蓄電関連" },
-  { id: "industrials", label: "産業・自動化", description: "産業テック、計測、製造自動化" }
+  { id: "industrials", label: "産業・自動化", description: "産業テック、計測、製造自動化" },
+  { id: "japan-core", label: "日本主要株", description: "J-Quants から取得する東証上場の主要銘柄" }
 ] as const;
 
 export type SecurityCategoryId = (typeof SECURITY_CATEGORIES)[number]["id"];
+export type MarketDataProvider = "alpaca" | "jquants";
+
+type SecurityUniverseSymbolInput =
+  | string
+  | Readonly<{
+      symbol: string;
+      name: string;
+    }>;
 
 type SecurityUniverseInput = Readonly<{
   category: SecurityCategoryId;
-  symbols: readonly string[];
+  dataProvider?: MarketDataProvider;
+  symbols: readonly SecurityUniverseSymbolInput[];
 }>;
 
 const SECURITY_UNIVERSE_INPUTS = [
@@ -104,6 +114,32 @@ const SECURITY_UNIVERSE_INPUTS = [
   {
     category: "industrials",
     symbols: ["TEL", "TRMB", "NOVT", "IPGP", "COHR", "ROK", "HON", "ETN", "AME", "KEYS", "APH", "GLW"]
+  },
+  {
+    category: "japan-core",
+    dataProvider: "jquants",
+    symbols: [
+      { symbol: "7203", name: "トヨタ自動車" },
+      { symbol: "6758", name: "ソニーグループ" },
+      { symbol: "6861", name: "キーエンス" },
+      { symbol: "9984", name: "ソフトバンクグループ" },
+      { symbol: "8306", name: "三菱UFJフィナンシャル・グループ" },
+      { symbol: "8035", name: "東京エレクトロン" },
+      { symbol: "6098", name: "リクルートホールディングス" },
+      { symbol: "9432", name: "日本電信電話" },
+      { symbol: "8058", name: "三菱商事" },
+      { symbol: "6501", name: "日立製作所" },
+      { symbol: "4063", name: "信越化学工業" },
+      { symbol: "7974", name: "任天堂" },
+      { symbol: "4568", name: "第一三共" },
+      { symbol: "9983", name: "ファーストリテイリング" },
+      { symbol: "6367", name: "ダイキン工業" },
+      { symbol: "7741", name: "HOYA" },
+      { symbol: "8001", name: "伊藤忠商事" },
+      { symbol: "8031", name: "三井物産" },
+      { symbol: "8411", name: "みずほフィナンシャルグループ" },
+      { symbol: "8766", name: "東京海上ホールディングス" }
+    ]
   }
 ] as const satisfies readonly SecurityUniverseInput[];
 
@@ -117,7 +153,9 @@ function buildDefaultUniverse() {
     const segment = category?.label ?? group.category;
 
     return group.symbols
-      .filter((symbol) => {
+      .map((input) => (typeof input === "string" ? { symbol: input, name: input } : input))
+      .filter((profile) => {
+        const symbol = profile.symbol.trim().toUpperCase();
         if (seen.has(symbol)) {
           return false;
         }
@@ -125,16 +163,18 @@ function buildDefaultUniverse() {
         seen.add(symbol);
         return true;
       })
-      .map((symbol) => ({
-        symbol,
-        name: symbol,
+      .map((profile) => ({
+        symbol: profile.symbol.trim().toUpperCase(),
+        name: profile.name,
         segment,
-        category: group.category
+        category: group.category,
+        dataProvider: (group as SecurityUniverseInput).dataProvider ?? "alpaca"
       }));
   });
 }
 
 export const DEFAULT_MARKET_UNIVERSE = buildDefaultUniverse();
+export const DEFAULT_ALPACA_MARKET_UNIVERSE = DEFAULT_MARKET_UNIVERSE.filter((profile) => profile.dataProvider === "alpaca");
 export const TARGET_SYMBOLS = DEFAULT_MARKET_UNIVERSE.map((profile) => profile.symbol);
 export const DEFAULT_SEMICONDUCTOR_UNIVERSE = DEFAULT_MARKET_UNIVERSE.filter((profile) => profile.category === "semiconductors");
 
@@ -173,6 +213,7 @@ export interface SymbolProfile {
   name: string;
   segment: string;
   category?: SecurityCategoryId;
+  dataProvider?: MarketDataProvider;
   earningsDate?: string;
 }
 
@@ -208,6 +249,7 @@ export interface RecommendationItem {
   name: string;
   segment: string;
   category?: SecurityCategoryId;
+  dataProvider?: MarketDataProvider;
   asOf: string;
   rating: SignalRating;
   action: SignalAction;

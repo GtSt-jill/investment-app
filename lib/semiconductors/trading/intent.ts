@@ -60,6 +60,10 @@ function buildIntentCandidate(
     blockReasons.push(blockReason("system", "SYMBOL_NOT_ENABLED", `${symbol} is not enabled for auto-trading.`));
   }
 
+  if ((recommendation.dataProvider ?? "alpaca") !== "alpaca") {
+    blockReasons.push(blockReason("system", "UNSUPPORTED_TRADING_PROVIDER", `${symbol} is analysis-only and cannot be traded via Alpaca.`));
+  }
+
   if (recommendation.action === "BUY" && activeOpenOrders.some((order) => order.symbol.toUpperCase() === symbol)) {
     blockReasons.push(blockReason("orders", "DUPLICATE_OPEN_ORDER", `${symbol} already has an active open order.`));
   }

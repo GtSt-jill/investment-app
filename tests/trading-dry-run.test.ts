@@ -163,6 +163,34 @@ describe("auto-trading dry-run core", () => {
     });
     expect(blockCodes(plan)).toContain("DUPLICATE_OPEN_ORDER");
   });
+
+  it("keeps J-Quants Japanese symbols analysis-only and does not build Alpaca orders", () => {
+    const result = createResult({
+      recommendations: [
+        recommendation({
+          symbol: "7203",
+          action: "BUY",
+          rating: "BUY",
+          score: 82,
+          close: 3000,
+          stopLoss: 2850,
+          dataProvider: "jquants"
+        })
+      ],
+      portfolio: portfolio({ positions: [] })
+    });
+    const plan = planFor(result.plans, "7203");
+
+    expect(plan).toMatchObject({
+      symbol: "7203",
+      intent: "OPEN_LONG",
+      status: "blocked",
+      quantity: 0,
+      notional: 0
+    });
+    expect(blockCodes(plan)).toContain("UNSUPPORTED_TRADING_PROVIDER");
+    expect(result.orders).toEqual([]);
+  });
 });
 
 function createResult(input: {
@@ -240,11 +268,13 @@ function recommendation(input: {
   stopLoss: number;
   volume20?: number;
   atrPct?: number;
+  dataProvider?: RecommendationItem["dataProvider"];
 }): RecommendationItem {
   return {
     symbol: input.symbol,
     name: input.symbol,
     segment: "Semiconductor Watchlist",
+    dataProvider: input.dataProvider,
     asOf: "2026-04-24",
     rating: input.rating,
     action: input.action,

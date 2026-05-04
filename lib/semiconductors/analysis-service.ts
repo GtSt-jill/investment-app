@@ -1,5 +1,5 @@
 import { analyzeMarketUniverse } from "@/lib/semiconductors/analyzer";
-import { fetchDailyBars } from "@/lib/semiconductors/alpaca";
+import { fetchMarketDailyBars } from "@/lib/semiconductors/market-data";
 import { DEFAULT_MARKET_UNIVERSE, type MarketAnalysisResult, type SymbolProfile } from "@/lib/semiconductors/types";
 
 export const DEFAULT_ANALYSIS_LOOKBACK_DAYS = 520;
@@ -23,14 +23,14 @@ export async function runMarketAnalysis(input: AnalysisExecutionInput = {}): Pro
   const symbols = coerceAnalysisSymbols(input.symbols);
   const lookbackDays = coerceAnalysisLookbackDays(input.lookbackDays);
   const universe = DEFAULT_MARKET_UNIVERSE.filter((profile) => symbols.includes(profile.symbol));
-  const fetchSymbols = Array.from(new Set([...symbols, ...MARKET_CONTEXT_SYMBOLS]));
-  const barsBySymbol = await fetchDailyBars(fetchSymbols, lookbackDays);
+  const { barsBySymbol, notes } = await fetchMarketDailyBars(symbols, universe, lookbackDays, MARKET_CONTEXT_SYMBOLS);
   const result = analyzeMarketUniverse(barsBySymbol, universe, {
     marketBars: {
       semiconductor: barsBySymbol.SMH,
       qqq: barsBySymbol.QQQ
     }
   });
+  result.notes.push(...notes);
 
   return {
     result,

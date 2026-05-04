@@ -15,11 +15,13 @@
 
 `types.ts` では `SECURITY_CATEGORIES` と `DEFAULT_MARKET_UNIVERSE` が定義されています。カテゴリを追加する場合は、カテゴリ定義と銘柄リストを追加すれば、API の allowlist、UI のカテゴリタブ、分析対象が同じ定義から更新されます。後方互換用に `DEFAULT_SEMICONDUCTOR_UNIVERSE` は残しています。
 
+米国株カテゴリは Alpaca、東証上場の `日本主要株` カテゴリは J-Quants から日足を取得します。J-Quants は V2 の API キー方式を既定にし、`JQUANTS_API_KEY` を `x-api-key` ヘッダーとして `/v2/equities/bars/daily` に送ります。東証銘柄は分析専用で、Alpaca の自動売買注文候補になっても `UNSUPPORTED_TRADING_PROVIDER` でブロックされます。
+
 ## 全体フロー
 
 ```mermaid
 flowchart TD
-  A["Alpaca から日足 OHLCV を取得"] --> B["日付順に正規化"]
+  A["Alpaca / J-Quants から日足 OHLCV を取得"] --> B["日付順に正規化"]
   B --> C{"252本以上あるか"}
   C -- No --> X["分析対象外"]
   C -- Yes --> D{"200日SMAを計算できるか"}
