@@ -42,7 +42,8 @@
 ### 重複制御
 
 - 同じ `snapshotKey` は upsert とする。
-- 同一日で再実行した場合、既定では既存 snapshot を保持し、`force=true` のときだけ上書きする。
+- `snapshotKey` は市場日付 `asOf` に加えて保存ローカル日を含める。同じ `asOf` でも翌日に保存した分析は別履歴として残す。
+- 同一保存日で再実行した場合、既定では既存 snapshot を保持し、`force=true` のときだけ上書きする。
 - 上書き時は `revision` をインクリメントし、`updatedAt` を更新する。
 
 ## DB 方針

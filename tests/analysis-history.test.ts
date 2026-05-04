@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisSnapshotRepository } from "@/lib/semiconductors/analysis-history/repository";
-import { createSnapshotKey, createUniverseHash } from "@/lib/semiconductors/analysis-history/snapshot";
+import { createSnapshotKey, createSnapshotSaveDate, createUniverseHash } from "@/lib/semiconductors/analysis-history/snapshot";
 import type { MarketAnalysisResult, RecommendationItem, SymbolProfile } from "@/lib/semiconductors/types";
 
 describe("analysis snapshot history", () => {
@@ -25,6 +25,7 @@ describe("analysis snapshot history", () => {
     expect(
       createSnapshotKey({
         asOf: "2026-05-01",
+        savedOn: "2026-05-02",
         universeHash: firstHash,
         lookbackDays: 520,
         analyzerVersion: "technical-v1"
@@ -32,11 +33,13 @@ describe("analysis snapshot history", () => {
     ).toBe(
       createSnapshotKey({
         asOf: "2026-05-01",
+        savedOn: "2026-05-02",
         universeHash: secondHash,
         lookbackDays: 520,
         analyzerVersion: "technical-v1"
       })
     );
+    expect(createSnapshotSaveDate("2026-05-02T23:30:00.000Z", "Asia/Tokyo")).toBe("2026-05-03");
   });
 
   it("upserts duplicate snapshot keys without creating another row", async () => {
@@ -61,6 +64,32 @@ describe("analysis snapshot history", () => {
       expect(duplicate.snapshot.revision).toBe(1);
       expect(duplicate.snapshot.result.recommendations[0].score).toBe(first.snapshot.result.recommendations[0].score);
       expect(repo.list()).toHaveLength(1);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("creates another snapshot when the same market asOf is saved on the next local date", async () => {
+    const repo = await tempRepository();
+    try {
+      const first = repo.upsert({
+        result: result("2026-05-01", "2026-05-02T08:30:00.000+09:00", { nvdaScore: 70 }),
+        lookbackDays: 520,
+        source: "manual",
+        savedAt: "2026-05-02T08:30:05.000+09:00"
+      });
+      const nextDay = repo.upsert({
+        result: result("2026-05-01", "2026-05-03T08:30:00.000+09:00", { nvdaScore: 82 }),
+        lookbackDays: 520,
+        source: "manual",
+        savedAt: "2026-05-03T08:30:05.000+09:00"
+      });
+
+      expect(first.created).toBe(true);
+      expect(nextDay.created).toBe(true);
+      expect(nextDay.snapshot.id).not.toBe(first.snapshot.id);
+      expect(nextDay.snapshot.snapshotKey).toContain("2026-05-03");
+      expect(repo.list()).toHaveLength(2);
     } finally {
       repo.close();
     }

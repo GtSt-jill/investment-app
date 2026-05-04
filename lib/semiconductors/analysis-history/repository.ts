@@ -8,6 +8,7 @@ import {
   DEFAULT_ANALYZER_VERSION,
   createSnapshotId,
   createSnapshotKey,
+  createSnapshotSaveDate,
   createUniverseHash,
   symbolsForResult
 } from "@/lib/semiconductors/analysis-history/snapshot";
@@ -132,13 +133,22 @@ export class AnalysisSnapshotRepository {
   upsert(input: SaveAnalysisSnapshotInput): SaveAnalysisSnapshotResult {
     const analyzerVersion = input.analyzerVersion ?? DEFAULT_ANALYZER_VERSION;
     const universeHash = createUniverseHash(input.result.universe);
+    const now = input.savedAt ?? new Date().toISOString();
+    const savedOn = createSnapshotSaveDate(now);
     const snapshotKey = createSnapshotKey({
+      asOf: input.result.asOf,
+      savedOn,
+      universeHash,
+      lookbackDays: input.lookbackDays,
+      analyzerVersion
+    });
+    const legacySnapshotKey = createSnapshotKey({
       asOf: input.result.asOf,
       universeHash,
       lookbackDays: input.lookbackDays,
       analyzerVersion
     });
-    const existing = this.findRowBySnapshotKey(snapshotKey);
+    const existing = this.findRowBySnapshotKey(snapshotKey) ?? this.findSameSavedDateLegacyRow(legacySnapshotKey, savedOn);
 
     if (existing && !input.force) {
       return {
@@ -148,7 +158,6 @@ export class AnalysisSnapshotRepository {
       };
     }
 
-    const now = input.savedAt ?? new Date().toISOString();
     const symbols = symbolsForResult(input.result);
     const notes = input.notes ?? input.result.notes ?? [];
     const id = existing?.id ?? createSnapshotId(snapshotKey);
@@ -157,9 +166,50 @@ export class AnalysisSnapshotRepository {
 
     this.db.exec("BEGIN");
     try {
-      this.db
-        .prepare(
+      if (existing && existing.snapshot_key !== snapshotKey) {
+        this.db
+          .prepare(
+            `
+            UPDATE analysis_snapshots
+            SET
+              snapshot_key = ?,
+              as_of = ?,
+              generated_at = ?,
+              saved_at = ?,
+              updated_at = ?,
+              revision = ?,
+              lookback_days = ?,
+              analyzer_version = ?,
+              universe_hash = ?,
+              symbols = ?,
+              summary_json = ?,
+              result_json = ?,
+              source = ?,
+              notes_json = ?
+            WHERE id = ?
           `
+          )
+          .run(
+            snapshotKey,
+            input.result.asOf,
+            input.result.generatedAt,
+            savedAt,
+            now,
+            revision,
+            input.lookbackDays,
+            analyzerVersion,
+            universeHash,
+            JSON.stringify(symbols),
+            JSON.stringify(input.result.summary),
+            JSON.stringify(input.result),
+            input.source,
+            JSON.stringify(notes),
+            id
+          );
+      } else {
+        this.db
+          .prepare(
+            `
           INSERT INTO analysis_snapshots (
             id, snapshot_key, as_of, generated_at, saved_at, updated_at, revision,
             lookback_days, analyzer_version, universe_hash, symbols, summary_json,
@@ -180,24 +230,25 @@ export class AnalysisSnapshotRepository {
             source = excluded.source,
             notes_json = excluded.notes_json
         `
-        )
-        .run(
-          id,
-          snapshotKey,
-          input.result.asOf,
-          input.result.generatedAt,
-          savedAt,
-          now,
-          revision,
-          input.lookbackDays,
-          analyzerVersion,
-          universeHash,
-          JSON.stringify(symbols),
-          JSON.stringify(input.result.summary),
-          JSON.stringify(input.result),
-          input.source,
-          JSON.stringify(notes)
-        );
+          )
+          .run(
+            id,
+            snapshotKey,
+            input.result.asOf,
+            input.result.generatedAt,
+            savedAt,
+            now,
+            revision,
+            input.lookbackDays,
+            analyzerVersion,
+            universeHash,
+            JSON.stringify(symbols),
+            JSON.stringify(input.result.summary),
+            JSON.stringify(input.result),
+            input.source,
+            JSON.stringify(notes)
+          );
+      }
 
       this.replaceSymbolRows(id, input.result);
       this.db.exec("COMMIT");
@@ -347,6 +398,11 @@ export class AnalysisSnapshotRepository {
 
   private findRowBySnapshotKey(snapshotKey: string) {
     return (this.db.prepare("SELECT * FROM analysis_snapshots WHERE snapshot_key = ?").get(snapshotKey) as SnapshotRow | undefined) ?? null;
+  }
+
+  private findSameSavedDateLegacyRow(snapshotKey: string, savedOn: string) {
+    const row = this.findRowBySnapshotKey(snapshotKey);
+    return row && createSnapshotSaveDate(row.saved_at) === savedOn ? row : null;
   }
 
   private replaceSymbolRows(snapshotId: string, result: MarketAnalysisResult) {

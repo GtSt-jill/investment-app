@@ -6,6 +6,7 @@ export const DEFAULT_ANALYZER_VERSION = "technical-v1";
 
 export interface SnapshotKeyInput {
   asOf: string;
+  savedOn?: string;
   universeHash: string;
   lookbackDays: number;
   analyzerVersion?: string;
@@ -44,11 +45,35 @@ export function createUniverseHash(universe: readonly SymbolProfile[] | readonly
 
 export function createSnapshotKey(input: SnapshotKeyInput) {
   const analyzerVersion = input.analyzerVersion ?? DEFAULT_ANALYZER_VERSION;
-  return `analysis:${input.asOf}:${input.lookbackDays}:${analyzerVersion}:${input.universeHash}`;
+  const saveDateSegment = input.savedOn ? `${input.savedOn}:` : "";
+  return `analysis:${input.asOf}:${saveDateSegment}${input.lookbackDays}:${analyzerVersion}:${input.universeHash}`;
 }
 
 export function createSnapshotId(snapshotKey: string) {
   return `analysis_${sha256(snapshotKey).slice(0, 24)}`;
+}
+
+export function createSnapshotSaveDate(savedAt: string, timeZone = process.env.ANALYSIS_HISTORY_TIME_ZONE ?? process.env.TZ ?? "Asia/Tokyo") {
+  const date = new Date(savedAt);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid analysis snapshot savedAt: ${savedAt}`);
+  }
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    throw new Error(`Invalid analysis snapshot time zone: ${timeZone}`);
+  }
+
+  return `${year}-${month}-${day}`;
 }
 
 export function symbolsForResult(result: MarketAnalysisResult) {
